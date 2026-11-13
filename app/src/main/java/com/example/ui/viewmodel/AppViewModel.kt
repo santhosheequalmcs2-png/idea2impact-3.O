@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.analytics.AnalyticsTracker
+import com.example.analytics.NoOpAnalyticsTracker
 import com.example.data.model.AuthUser
 import com.example.data.model.BackendComment
 import com.example.data.model.BackendInnovation
@@ -13,14 +15,19 @@ import com.example.data.model.CopilotMessage
 import com.example.data.model.DashboardStats
 import com.example.data.model.DigitalNdaRecord
 import com.example.data.model.ExactCategories
+import com.example.data.model.NotificationAlert
 import com.example.data.model.PitchDeckResult
 import com.example.data.model.UiState
+import com.example.data.preferences.NotificationLocalDataStore
 import com.example.data.preferences.ThemePreferences
 import com.example.data.preferences.TokenManager
 import com.example.data.repository.AiCopilotRepository
 import com.example.data.repository.BackendApiException
 import com.example.data.repository.BackendRepository
 import com.example.util.SecurityCryptoUtils
+import com.google.firebase.Firebase
+import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.auth.auth
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -31,6 +38,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -45,17 +53,24 @@ class AppViewModel(
     private val repository: BackendRepository,
     private val tokenManager: TokenManager,
     private val themePreferences: ThemePreferences,
-    private val aiCopilotRepository: AiCopilotRepository = AiCopilotRepository()
+    private val aiCopilotRepository: AiCopilotRepository = AiCopilotRepository(),
+    private val notificationDataStore: NotificationLocalDataStore? = null,
+    private val analyticsTracker: AnalyticsTracker = NoOpAnalyticsTracker
 ) : ViewModel() {
 
     val isDarkTheme: StateFlow<Boolean> = themePreferences.isDarkTheme
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), false)
 
     val isSoundEnabled: StateFlow<Boolean> = themePreferences.isSoundEnabled
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), true)
 
     val hasCompletedOnboarding: StateFlow<Boolean?> = themePreferences.hasCompletedOnboarding
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val notifications: StateFlow<List<NotificationAlert>> = (notificationDataStore?.alerts ?: flowOf(emptyList()))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    val unreadNotificationsCount: StateFlow<Int> = (notificationDataStore?.unreadCount ?: flowOf(0))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), 0)
 
     private val _currentUser = MutableStateFlow<AuthUser?>(null)
     val currentUser: StateFlow<AuthUser?> = _currentUser.asStateFlow()
@@ -173,6 +188,9 @@ class AppViewModel(
     private val _isAiLoading = MutableStateFlow(false)
     val isAiLoading: StateFlow<Boolean> = _isAiLoading.asStateFlow()
 
+    private val _canRegenerateLastReply = MutableStateFlow(false)
+    val canRegenerateLastReply: StateFlow<Boolean> = _canRegenerateLastReply.asStateFlow()
+
     private val _customApiKey = MutableStateFlow(tokenManager.getCustomApiKey().orEmpty())
     val customApiKey: StateFlow<String> = _customApiKey.asStateFlow()
 
@@ -185,8 +203,15 @@ class AppViewModel(
     private var searchJob: Job? = null
     private var innovationsJob: Job? = null
     private var talentsJob: Job? = null
+    private var aiStreamJob: Job? = null
+    private var activeStreamMsgId: String? = null
+    private var userRequestedAiStop = false
+    private var lastPromptPayload: Triple<String, Bitmap?, String>? = null
 
     init {
+        viewModelScope.launch {
+            notificationDataStore?.ensureSeeded()
+        }
         refreshAllInitialData()
     }
 
@@ -198,20 +223,33 @@ class AppViewModel(
             if (repository.hasSavedToken()) {
                 runCatching { repository.fetchCurrentUser() }
                     .onSuccess { user ->
-                        _currentUser.value = user
-                        if (user != null) loadDashboardStats()
+                        _currentUser.value = user ?: Firebase.auth.currentUser?.toAuthUser()
+                        if (_currentUser.value != null) loadDashboardStats()
                     }
                     .onFailure { e ->
                         if (e is CancellationException) throw e
                         Log.w(TAG, "Deferred profile refresh skipped: ${e.message}")
+                        if (_currentUser.value == null) {
+                            Firebase.auth.currentUser?.let { fbUser ->
+                                _currentUser.value = fbUser.toAuthUser()
+                                loadDashboardStats()
+                            }
+                        }
                     }
+            } else {
+                Firebase.auth.currentUser?.let { fbUser ->
+                    _currentUser.value = fbUser.toAuthUser()
+                    loadDashboardStats()
+                }
             }
         }
     }
 
     fun toggleTheme() {
-        viewModelScope.launch {
-            themePreferences.setDarkTheme(!isDarkTheme.value)
+        val next = !isDarkTheme.value
+        themePreferences.setDarkThemeImmediate(next)
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            themePreferences.persistDarkTheme(next)
         }
     }
 
@@ -228,13 +266,39 @@ class AppViewModel(
     }
 
     fun replayOnboarding() {
+        analyticsTracker.logOnboardingStarted(source = "replay")
         viewModelScope.launch {
             themePreferences.setOnboardingCompleted(false)
         }
     }
 
+    fun markNotificationRead(alertId: String) {
+        viewModelScope.launch {
+            notificationDataStore?.markAsRead(alertId)
+        }
+    }
+
+    fun markAllNotificationsRead() {
+        viewModelScope.launch {
+            notificationDataStore?.markAllRead()
+        }
+    }
+
+    fun deleteNotification(alertId: String) {
+        viewModelScope.launch {
+            notificationDataStore?.deleteAlert(alertId)
+        }
+    }
+
+    fun clearAllNotifications() {
+        viewModelScope.launch {
+            notificationDataStore?.clearAll()
+        }
+    }
+
     fun setSelectedSort(sort: String) {
         _selectedSort.value = sort
+        analyticsTracker.logMarketplaceSortSelected(sort)
     }
 
     fun clearMarketplaceFilters() {
@@ -242,6 +306,7 @@ class AppViewModel(
         _selectedCategory.value = "All"
         _selectedStage.value = "All"
         _selectedSort.value = "Featured"
+        analyticsTracker.logMarketplaceFiltersCleared()
         loadInnovations()
     }
 
@@ -315,11 +380,47 @@ class AppViewModel(
         }
     }
 
+    fun setAuthError(message: String) {
+        _authError.value = message
+    }
+
+    fun onGoogleAuthSuccess(isAutoSignIn: Boolean = false) {
+        val fbUser = Firebase.auth.currentUser ?: return
+        val authUser = fbUser.toAuthUser()
+        _currentUser.value = authUser
+        _authError.value = null
+        _showAuthModal.value = false
+        if (!isAutoSignIn) {
+            _snackbarMessage.value = "Signed in with Google as ${authUser.name}!"
+        }
+        loadDashboardStats()
+    }
+
     fun logout() {
         repository.signOut()
+        runCatching { Firebase.auth.signOut() }
         _currentUser.value = null
         _dashboardState.value = UiState.Success(DashboardStats())
         _snackbarMessage.value = "Signed out."
+    }
+
+    private fun isUserSignedIn(): Boolean {
+        return repository.hasSavedToken() || _currentUser.value != null || Firebase.auth.currentUser != null
+    }
+
+    private fun FirebaseUser.toAuthUser(): AuthUser {
+        val resolvedName = displayName?.takeIf { it.isNotBlank() }
+            ?: email?.substringBefore('@')?.takeIf { it.isNotBlank() }
+            ?: "Google Innovator"
+        return AuthUser(
+            id = uid,
+            name = resolvedName,
+            email = email.orEmpty(),
+            role = "Creator",
+            headline = "Google Account · IDEA2IMPACT",
+            avatarUrl = photoUrl?.toString(),
+            verified = isEmailVerified
+        )
     }
 
     // --- Categories & Marketplace ---
@@ -341,21 +442,31 @@ class AppViewModel(
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
             delay(320L)
+            val clean = query.trim()
+            if (clean.isNotEmpty()) {
+                analyticsTracker.logMarketplaceSearch(
+                    queryPreview = clean,
+                    queryLength = clean.length
+                )
+            }
             loadInnovations()
         }
     }
 
-    fun setSelectedCategory(category: String) {
+    fun setSelectedCategory(category: String, source: String = "filter_chip") {
         _selectedCategory.value = category
+        analyticsTracker.logMarketplaceCategorySelected(category = category, source = source)
         loadInnovations()
     }
 
     fun setSelectedStage(stage: String) {
         _selectedStage.value = stage
+        analyticsTracker.logMarketplaceStageSelected(stage)
         loadInnovations()
     }
 
-    fun refreshMarketplace() {
+    fun refreshMarketplace(source: String = "manual") {
+        analyticsTracker.logMarketplaceRefreshed(source)
         loadInnovations()
         loadCategories()
     }
@@ -392,19 +503,31 @@ class AppViewModel(
 
     // --- Innovation Detail & Actions ---
 
-    fun openInnovationDetail(item: BackendInnovation) {
+    fun openInnovationDetail(item: BackendInnovation, source: String = "marketplace") {
         _selectedDetail.value = item
         _focusedInnovation.value = item
         _pitchDeckState.value = null
+        analyticsTracker.logInnovationSelected(
+            innovationId = item.id,
+            title = item.title,
+            category = item.category,
+            stage = item.stage,
+            source = source
+        )
         refreshInnovationDetail(item.id)
     }
 
     fun setFocusedInnovation(item: BackendInnovation?) {
         _focusedInnovation.value = item
+        analyticsTracker.logCopilotContextSelected(
+            innovationId = item?.id,
+            innovationCategory = item?.category
+        )
     }
 
-    fun setFastAiModel(useFast: Boolean) {
+    fun setFastAiModel(useFast: Boolean, surface: String = "full_screen") {
         _useFastAiModel.value = useFast
+        analyticsTracker.logCopilotModelToggled(useFastModel = useFast, surface = surface)
     }
 
     fun refreshInnovationDetail(id: String) {
@@ -427,7 +550,7 @@ class AppViewModel(
     }
 
     fun toggleLike(innovation: BackendInnovation) {
-        if (!repository.hasSavedToken()) {
+        if (!isUserSignedIn()) {
             _snackbarMessage.value = "Sign in to upvote innovations."
             openAuthModal()
             return
@@ -441,6 +564,17 @@ class AppViewModel(
         applyInnovationUpdate(optimistic)
 
         viewModelScope.launch {
+            if (!repository.hasSavedToken()) {
+                analyticsTracker.logInnovationLiked(
+                    innovationId = optimistic.id,
+                    category = optimistic.category,
+                    liked = optimistic.isLiked
+                )
+                if (!prevLiked && optimistic.isLiked) {
+                    notificationDataStore?.recordLikeAction(optimistic)
+                }
+                return@launch
+            }
             try {
                 val (liked, count) = repository.toggleLike(innovation.id)
                 val synced = optimistic.copy(
@@ -448,6 +582,14 @@ class AppViewModel(
                     likeCount = count ?: optimistic.likeCount
                 )
                 applyInnovationUpdate(synced)
+                analyticsTracker.logInnovationLiked(
+                    innovationId = synced.id,
+                    category = synced.category,
+                    liked = synced.isLiked
+                )
+                if (!prevLiked && synced.isLiked) {
+                    notificationDataStore?.recordLikeAction(synced)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: BackendApiException) {
@@ -462,7 +604,7 @@ class AppViewModel(
     }
 
     fun toggleBookmark(innovation: BackendInnovation) {
-        if (!repository.hasSavedToken()) {
+        if (!isUserSignedIn()) {
             _snackbarMessage.value = "Sign in to bookmark innovations."
             openAuthModal()
             return
@@ -471,10 +613,25 @@ class AppViewModel(
         applyInnovationUpdate(optimistic)
 
         viewModelScope.launch {
+            if (!repository.hasSavedToken()) {
+                analyticsTracker.logInnovationBookmarked(
+                    innovationId = optimistic.id,
+                    category = optimistic.category,
+                    bookmarked = optimistic.isBookmarked
+                )
+                _snackbarMessage.value = if (optimistic.isBookmarked) "Saved to bookmarks" else "Removed from bookmarks"
+                loadDashboardStats()
+                return@launch
+            }
             try {
                 val bookmarked = repository.toggleFavourite(innovation.id)
                 val synced = optimistic.copy(isBookmarked = bookmarked ?: optimistic.isBookmarked)
                 applyInnovationUpdate(synced)
+                analyticsTracker.logInnovationBookmarked(
+                    innovationId = synced.id,
+                    category = synced.category,
+                    bookmarked = synced.isBookmarked
+                )
                 _snackbarMessage.value = if (synced.isBookmarked) "Saved to bookmarks" else "Removed from bookmarks"
                 loadDashboardStats()
             } catch (e: CancellationException) {
@@ -503,7 +660,7 @@ class AppViewModel(
     fun postComment(innovationId: String, text: String, onDone: () -> Unit) {
         val clean = text.trim()
         if (clean.isBlank()) return
-        if (!repository.hasSavedToken()) {
+        if (!isUserSignedIn()) {
             _snackbarMessage.value = "Sign in to join the discussion."
             openAuthModal()
             return
@@ -511,6 +668,21 @@ class AppViewModel(
         viewModelScope.launch {
             _isActionBusy.value = true
             try {
+                if (!repository.hasSavedToken()) {
+                    val user = _currentUser.value
+                    val localComment = BackendComment(
+                        id = UUID.randomUUID().toString(),
+                        innovationId = innovationId,
+                        authorName = user?.name ?: "Google Innovator",
+                        authorAvatar = user?.avatarUrl,
+                        body = clean,
+                        createdAt = SecurityCryptoUtils.formatTime()
+                    )
+                    _detailComments.update { listOf(localComment) + it }
+                    _snackbarMessage.value = "Comment posted."
+                    onDone()
+                    return@launch
+                }
                 val created = repository.postComment(innovationId, clean)
                 if (created != null && created.body.isNotBlank()) {
                     _detailComments.update { listOf(created) + it }
@@ -540,7 +712,7 @@ class AppViewModel(
         contactInfo: String,
         onSuccess: () -> Unit
     ) {
-        if (!repository.hasSavedToken()) {
+        if (!isUserSignedIn()) {
             _snackbarMessage.value = "Sign in to submit a collaboration proposal."
             openAuthModal()
             return
@@ -548,7 +720,21 @@ class AppViewModel(
         viewModelScope.launch {
             _isActionBusy.value = true
             try {
-                repository.submitProposal(innovationId, type, amount, message, contactInfo)
+                if (repository.hasSavedToken()) {
+                    repository.submitProposal(innovationId, type, amount, message, contactInfo)
+                }
+                val targetInnovation = _selectedDetail.value?.takeIf { it.id == innovationId }
+                    ?: availableInnovations.value.firstOrNull { it.id == innovationId }
+                notificationDataStore?.recordProposalSubmitted(
+                    innovation = targetInnovation,
+                    innovationId = innovationId,
+                    proposalType = type,
+                    amount = amount
+                )
+                analyticsTracker.logProposalSubmitted(
+                    innovationId = innovationId,
+                    proposalType = type
+                )
                 _snackbarMessage.value = "Collaboration proposal submitted!"
                 loadDashboardStats()
                 onSuccess()
@@ -579,6 +765,10 @@ class AppViewModel(
             signedAt = SecurityCryptoUtils.formatTime()
         )
         _signedNdas.update { it + (innovation.id to record) }
+        analyticsTracker.logDigitalNdaSigned(
+            innovationId = innovation.id,
+            category = innovation.category
+        )
         _snackbarMessage.value = "Digital Mutual NDA confirmed (${record.signatureHash})."
     }
 
@@ -588,10 +778,26 @@ class AppViewModel(
             try {
                 val deck = aiCopilotRepository.generateBackendPitchDeck(innovation)
                 _pitchDeckState.value = UiState.Success(deck)
+                analyticsTracker.logCopilotPitchDeckGenerated(
+                    innovationId = innovation.id,
+                    category = innovation.category,
+                    success = true
+                )
+                notificationDataStore?.recordPlatformUpdate(
+                    title = "AI Pitch Deck Ready",
+                    message = "Synthesized a 5-slide investor deck for \"${innovation.title}\".",
+                    innovationId = innovation.id,
+                    dedupeKey = "pitch_deck_${innovation.id}"
+                )
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to generate 5-slide AI pitch deck", e)
+                analyticsTracker.logCopilotPitchDeckGenerated(
+                    innovationId = innovation.id,
+                    category = innovation.category,
+                    success = false
+                )
                 _pitchDeckState.value = UiState.Error(
                     e.localizedMessage ?: "Failed to generate 5-slide AI pitch deck."
                 )
@@ -632,9 +838,21 @@ class AppViewModel(
     fun loadDashboardStats(isPullRefresh: Boolean = false) {
         if (!repository.hasSavedToken()) {
             _isRefreshingDashboard.value = false
-            _dashboardState.value = UiState.Success(DashboardStats())
-            if (isPullRefresh) {
-                _snackbarMessage.value = "Sign in to sync your personal dashboard."
+            if (isUserSignedIn()) {
+                val saved = availableInnovations.value.filter { it.isBookmarked }
+                val totalLikes = availableInnovations.value.count { it.isLiked }
+                _dashboardState.value = UiState.Success(
+                    DashboardStats(
+                        savedOpportunities = saved.size,
+                        totalUpvotes = totalLikes,
+                        savedList = saved
+                    )
+                )
+            } else {
+                _dashboardState.value = UiState.Success(DashboardStats())
+                if (isPullRefresh) {
+                    _snackbarMessage.value = "Sign in to sync your personal dashboard."
+                }
             }
             return
         }
@@ -648,6 +866,7 @@ class AppViewModel(
             try {
                 val stats = repository.fetchDashboardStats()
                 _dashboardState.value = UiState.Success(stats)
+                notificationDataStore?.syncDashboardActivity(stats)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: BackendApiException) {
@@ -679,6 +898,7 @@ class AppViewModel(
         val clean = key.trim()
         tokenManager.saveCustomApiKey(clean)
         _customApiKey.value = clean
+        analyticsTracker.logCopilotApiKeyUpdated(hasCustomKey = clean.isNotBlank())
         _snackbarMessage.value = if (clean.isBlank()) {
             "Custom Google AI Studio key cleared."
         } else {
@@ -686,9 +906,17 @@ class AppViewModel(
         }
     }
 
-    fun sendCopilotPrompt(prompt: String, attachedImage: Bitmap? = null) {
+    fun sendCopilotPrompt(
+        prompt: String,
+        attachedImage: Bitmap? = null,
+        promptSource: String = "custom_input",
+        isPopup: Boolean = false
+    ) {
         val trimmed = prompt.trim()
         if (trimmed.isBlank() || _isAiLoading.value) return
+
+        lastPromptPayload = Triple(trimmed, attachedImage, promptSource)
+        userRequestedAiStop = false
 
         val displayUserText = if (attachedImage != null) {
             "[Attached Prototype Image]\n$trimmed"
@@ -704,6 +932,7 @@ class AppViewModel(
         )
         val priorHistory = _copilotMessages.value
         val streamMsgId = UUID.randomUUID().toString()
+        activeStreamMsgId = streamMsgId
         val streamingPlaceholder = CopilotMessage(
             id = streamMsgId,
             isAssistant = true,
@@ -713,11 +942,28 @@ class AppViewModel(
 
         _copilotMessages.value = priorHistory + userMsg + streamingPlaceholder
         _isAiLoading.value = true
+        _canRegenerateLastReply.value = false
 
         val targetInnovation = _focusedInnovation.value ?: _selectedDetail.value
+        val catalogSnapshot = if (targetInnovation == null) availableInnovations.value.take(6) else emptyList()
         val userKey = _customApiKey.value.takeIf { it.isNotBlank() }
+        val modelTier = when {
+            userKey != null && attachedImage == null -> "custom_key"
+            _useFastAiModel.value -> "fast_flash_lite"
+            else -> "deep_flash"
+        }
+        analyticsTracker.logCopilotPromptSent(
+            promptSource = promptSource,
+            modelTier = modelTier,
+            hasAttachedImage = attachedImage != null,
+            hasInnovationContext = targetInnovation != null,
+            innovationCategory = targetInnovation?.category,
+            promptLength = trimmed.length,
+            surface = if (isPopup) "floating_popup" else "full_screen"
+        )
 
-        viewModelScope.launch {
+        aiStreamJob = viewModelScope.launch {
+            var responseLength = 0
             try {
                 if (userKey != null && attachedImage == null) {
                     val contextSummary = targetInnovation?.let {
@@ -728,6 +974,7 @@ class AppViewModel(
                         context = contextSummary,
                         customApiKey = userKey
                     )
+                    responseLength = reply.length
                     _copilotMessages.update { msgs ->
                         msgs.map { if (it.id == streamMsgId) it.copy(content = reply) else it }
                     }
@@ -737,28 +984,93 @@ class AppViewModel(
                         history = priorHistory,
                         activeInnovation = targetInnovation,
                         attachedImage = attachedImage,
-                        useFastModel = _useFastAiModel.value
+                        useFastModel = _useFastAiModel.value,
+                        catalogContext = catalogSnapshot
                     ).collect { partial ->
+                        responseLength = partial.length
                         _copilotMessages.update { msgs ->
                             msgs.map { if (it.id == streamMsgId) it.copy(content = partial) else it }
                         }
                     }
                 }
+                analyticsTracker.logCopilotResponseCompleted(
+                    modelTier = modelTier,
+                    success = true,
+                    responseLength = responseLength
+                )
             } catch (e: CancellationException) {
+                if (userRequestedAiStop) {
+                    _copilotMessages.update { msgs ->
+                        msgs.map {
+                            if (it.id == streamMsgId) {
+                                val updated = if (it.content.isBlank()) {
+                                    "*(Generation stopped)*"
+                                } else {
+                                    "${it.content.trimEnd()}\n\n*(Generation stopped)*"
+                                }
+                                it.copy(content = updated)
+                            } else it
+                        }
+                    }
+                }
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "AI Copilot generation error", e)
-                val errorText = "### AI Request Error\n- ${e.localizedMessage ?: "Unable to complete Gemini AI request."}\n- Check network connectivity or retry your prompt."
+                Log.e(TAG, "AI Sana generation error", e)
+                analyticsTracker.logCopilotResponseCompleted(
+                    modelTier = modelTier,
+                    success = false,
+                    responseLength = responseLength
+                )
+                val errorText = "### AI Request Error\n- ${e.localizedMessage ?: "Unable to complete AI Sana request."}\n- Check network connectivity or tap **Regenerate** to retry."
                 _copilotMessages.update { msgs ->
-                    msgs.map { if (it.id == streamMsgId) it.copy(content = errorText) else it }
+                    msgs.map { if (it.id == streamMsgId) it.copy(content = errorText, isError = true) else it }
                 }
             } finally {
                 _isAiLoading.value = false
+                _canRegenerateLastReply.value = lastPromptPayload != null
+                if (activeStreamMsgId == streamMsgId) {
+                    activeStreamMsgId = null
+                }
             }
         }
     }
 
+    fun stopCopilotGeneration() {
+        if (!_isAiLoading.value) return
+        userRequestedAiStop = true
+        aiStreamJob?.cancel()
+        _isAiLoading.value = false
+        _canRegenerateLastReply.value = lastPromptPayload != null
+    }
+
+    fun regenerateLastCopilotReply(isPopup: Boolean = false) {
+        val (prompt, bitmap, _) = lastPromptPayload ?: return
+        if (_isAiLoading.value) return
+        _copilotMessages.update { current ->
+            val trimmedList = current.toMutableList()
+            if (trimmedList.lastOrNull()?.isAssistant == true && trimmedList.lastOrNull()?.id != "welcome") {
+                trimmedList.removeAt(trimmedList.lastIndex)
+            }
+            if (trimmedList.lastOrNull()?.isAssistant == false) {
+                trimmedList.removeAt(trimmedList.lastIndex)
+            }
+            trimmedList
+        }
+        sendCopilotPrompt(
+            prompt = prompt,
+            attachedImage = bitmap,
+            promptSource = "regenerate",
+            isPopup = isPopup
+        )
+    }
+
     fun resetCopilotChat() {
+        userRequestedAiStop = false
+        aiStreamJob?.cancel()
+        _isAiLoading.value = false
+        lastPromptPayload = null
+        _canRegenerateLastReply.value = false
+        analyticsTracker.logCopilotChatReset()
         _copilotMessages.value = listOf(createWelcomeMessage())
     }
 
@@ -766,10 +1078,10 @@ class AppViewModel(
         return CopilotMessage(
             id = "welcome",
             isAssistant = true,
-            content = "### Welcome to Idea Assistant\n" +
-                "Powered by **GEMINI 3.8 FLASH** with real-time streaming, multi-turn memory, and prototype vision analysis.\n\n" +
-                "- Select an innovation context chip above to analyze any listing.\n" +
-                "- Attach a prototype photo or tap any quick action chip to begin.",
+            content = "### Meet AI Sana\n" +
+                "Senior technical, IP, and venture architect with multi-turn memory, prototype vision, and live Marketplace awareness.\n\n" +
+                "- **Code & Architecture:** Hardware BOMs, firmware stacks, schemas, and MVP blueprints.\n" +
+                "- **Diligence & Strategy:** Prior-art risks, bottom-up TAM/SAM/SOM, and concrete next steps.",
             timestamp = SecurityCryptoUtils.formatTime()
         )
     }

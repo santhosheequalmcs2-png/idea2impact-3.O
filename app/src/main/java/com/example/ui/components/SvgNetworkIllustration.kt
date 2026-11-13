@@ -348,21 +348,6 @@ fun HeroIllustration(
                         )
                     }
                 }
-
-                // Bottom-End Drag / Tap Hint
-                Surface(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
-                    shape = RoundedCornerShape(50),
-                    modifier = Modifier.align(Alignment.BottomEnd)
-                ) {
-                    Text(
-                        text = "Drag · Tap 3D",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
-                }
             }
 
             // Staggered Trust Cards matching web hero right column

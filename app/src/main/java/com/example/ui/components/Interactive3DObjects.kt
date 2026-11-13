@@ -215,6 +215,7 @@ private fun WebsiteStyle3DStage(
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .padding(horizontal = 2.dp)
             .height(height)
             .clip(RoundedCornerShape(20.dp))
             .then(
@@ -330,22 +331,6 @@ private fun WebsiteStyle3DStage(
                         modifier = Modifier.size(16.dp)
                     )
                 }
-            }
-
-            Surface(
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
-                shape = RoundedCornerShape(50),
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(10.dp)
-            ) {
-                Text(
-                    text = "Drag · Tap",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
             }
         }
     }
@@ -697,7 +682,7 @@ fun NeuralCore3D(
     var pulseCount by remember { mutableIntStateOf(0) }
 
     WebsiteStyle3DStage(
-        badgeText = if (isThinking) "Copilot Active · Thinking..." else "Copilot Companion · Taps: $pulseCount",
+        badgeText = if (isThinking) "AI Sana Active · Thinking..." else "AI Sana Companion · Taps: $pulseCount",
         accent = if (isThinking) EmeraldSuccess else ElectricCyan,
         testTag = "copilot_3d_neural_core",
         height = 176.dp,

@@ -41,6 +41,7 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.OpenInFull
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
@@ -64,10 +65,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -75,11 +74,13 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import com.example.analytics.LocalAnalyticsTracker
 import com.example.data.model.BackendInnovation
 import com.example.data.model.CopilotMessage
 import com.example.ui.theme.CobaltBlue
 import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.EmeraldSuccess
+import com.example.util.LocalHapticFeedbackManager
 import kotlin.math.roundToInt
 
 private val POPUP_QUICK_PROMPTS = listOf(
@@ -97,12 +98,14 @@ fun MovableAiPopup(
     useFastModel: Boolean,
     activeContext: BackendInnovation?,
     onToggleFastModel: (Boolean) -> Unit,
-    onSendPrompt: (String) -> Unit,
+    onSendPrompt: (prompt: String, promptSource: String) -> Unit,
+    onStopGeneration: () -> Unit = {},
     onOpenFullCopilot: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
-    val haptics = LocalHapticFeedback.current
+    val haptics = LocalHapticFeedbackManager.current
+    val analytics = LocalAnalyticsTracker.current
 
     BoxWithConstraints(
         modifier = modifier
@@ -195,7 +198,7 @@ fun MovableAiPopup(
                         detectDragGestures(
                             onDragStart = {
                                 isDraggingBubble = true
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptics.dragStart()
                             },
                             onDragEnd = { isDraggingBubble = false },
                             onDragCancel = { isDraggingBubble = false },
@@ -208,7 +211,7 @@ fun MovableAiPopup(
                     }
                     .clip(CircleShape)
                     .clickable {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptics.tap()
                         // Anchor popup near current bubble position clamped to screen
                         popupX = (bubbleX - popupWidthPx + bubbleSizePx).coerceIn(marginPx, maxPopupX)
                         popupY = (bubbleY - popupHeightPx + bubbleSizePx).coerceIn(topMinPx, maxPopupY)
@@ -232,7 +235,7 @@ fun MovableAiPopup(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(
                             imageVector = Icons.Filled.AutoAwesome,
-                            contentDescription = "Open movable AI Assistant",
+                            contentDescription = "Open movable AI Sana",
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(22.dp)
                         )
@@ -303,7 +306,7 @@ fun MovableAiPopup(
                                 detectDragGestures(
                                     onDragStart = {
                                         isDraggingPopup = true
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        haptics.dragStart()
                                     },
                                     onDragEnd = { isDraggingPopup = false },
                                     onDragCancel = { isDraggingPopup = false },
@@ -333,7 +336,7 @@ fun MovableAiPopup(
                         )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Gemini AI Pop-up",
+                                text = "AI Sana Pop-up",
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1
@@ -349,7 +352,11 @@ fun MovableAiPopup(
 
                         FilterChip(
                             selected = useFastModel,
-                            onClick = { onToggleFastModel(!useFastModel) },
+                            onClick = {
+                                val nextFast = !useFastModel
+                                haptics.toggle(nextFast)
+                                onToggleFastModel(nextFast)
+                            },
                             leadingIcon = { Icon(Icons.Filled.Bolt, contentDescription = null, modifier = Modifier.size(14.dp)) },
                             label = {
                                 Text(
@@ -360,19 +367,23 @@ fun MovableAiPopup(
                         )
 
                         IconButton(
-                            onClick = onOpenFullCopilot,
+                            onClick = {
+                                haptics.tap()
+                                analytics.logCopilotExpandedFromPopup()
+                                onOpenFullCopilot()
+                            },
                             modifier = Modifier.size(40.dp).testTag("movable_ai_expand_tab")
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.OpenInFull,
-                                contentDescription = "Open full AI Copilot",
+                                contentDescription = "Open full AI Sana",
                                 modifier = Modifier.size(18.dp)
                             )
                         }
 
                         IconButton(
                             onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptics.tap()
                                 onExpandedChange(false)
                             },
                             modifier = Modifier.size(40.dp).testTag("movable_ai_close")
@@ -394,8 +405,12 @@ fun MovableAiPopup(
                             AssistChip(
                                 onClick = {
                                     if (!isLoading) {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        onSendPrompt(prompt)
+                                        haptics.tap()
+                                        analytics.logCopilotQuickActionTapped(
+                                            actionLabel = label,
+                                            surface = "floating_popup"
+                                        )
+                                        onSendPrompt(prompt, "popup_quick_action")
                                     }
                                 },
                                 label = { Text(label, style = MaterialTheme.typography.labelSmall) }
@@ -445,14 +460,17 @@ fun MovableAiPopup(
                                                 )
                                             }
                                         } else {
-                                            Text(
-                                                text = msg.content.replace("### ", "").replace("**", ""),
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = if (msg.isAssistant) {
+                                            MarkdownMessageContent(
+                                                raw = msg.content,
+                                                textColor = if (msg.isAssistant) {
                                                     MaterialTheme.colorScheme.onSurface
                                                 } else {
                                                     MaterialTheme.colorScheme.onPrimaryContainer
-                                                }
+                                                },
+                                                primaryAccent = MaterialTheme.colorScheme.primary,
+                                                codeBg = MaterialTheme.colorScheme.surfaceVariant,
+                                                textStyle = MaterialTheme.typography.bodySmall,
+                                                compact = true
                                             )
                                         }
                                     }
@@ -474,7 +492,7 @@ fun MovableAiPopup(
                             onValueChange = { inputText = it },
                             placeholder = {
                                 Text(
-                                    text = "Ask Gemini...",
+                                    text = "Ask AI Sana...",
                                     style = MaterialTheme.typography.bodySmall
                                 )
                             },
@@ -486,32 +504,37 @@ fun MovableAiPopup(
 
                         Surface(
                             shape = CircleShape,
-                            color = if (inputText.isNotBlank() && !isLoading) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant
+                            color = when {
+                                isLoading -> MaterialTheme.colorScheme.errorContainer
+                                inputText.isNotBlank() -> MaterialTheme.colorScheme.primary
+                                else -> MaterialTheme.colorScheme.surfaceVariant
                             },
                             modifier = Modifier
                                 .size(48.dp)
                                 .clip(CircleShape)
-                                .clickable(enabled = inputText.isNotBlank() && !isLoading) {
-                                    val outgoing = inputText.trim()
-                                    if (outgoing.isNotBlank()) {
-                                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        onSendPrompt(outgoing)
-                                        inputText = ""
+                                .clickable(enabled = isLoading || inputText.isNotBlank()) {
+                                    if (isLoading) {
+                                        haptics.tap()
+                                        onStopGeneration()
+                                    } else {
+                                        val outgoing = inputText.trim()
+                                        if (outgoing.isNotBlank()) {
+                                            haptics.success()
+                                            onSendPrompt(outgoing, "popup_input")
+                                            inputText = ""
+                                        }
                                     }
                                 }
                                 .testTag("movable_ai_send")
                         ) {
                             Box(contentAlignment = Alignment.Center) {
                                 Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Send,
-                                    contentDescription = "Send prompt",
-                                    tint = if (inputText.isNotBlank() && !isLoading) {
-                                        MaterialTheme.colorScheme.onPrimary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    imageVector = if (isLoading) Icons.Filled.Stop else Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = if (isLoading) "Stop generation" else "Send prompt",
+                                    tint = when {
+                                        isLoading -> MaterialTheme.colorScheme.onErrorContainer
+                                        inputText.isNotBlank() -> MaterialTheme.colorScheme.onPrimary
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
                                     },
                                     modifier = Modifier.size(18.dp)
                                 )

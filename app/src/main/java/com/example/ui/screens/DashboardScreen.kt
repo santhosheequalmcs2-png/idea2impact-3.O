@@ -64,6 +64,7 @@ import com.example.ui.components.InnovationCardSkeleton
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.GoldAmber
 import com.example.ui.theme.RoseError
+import com.example.util.LocalHapticFeedbackManager
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -81,13 +82,17 @@ fun DashboardScreen(
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf("My Innovations", "Saved", "Inbound Proposals")
+    val haptics = LocalHapticFeedbackManager.current
 
     val stats = (dashboardState as? UiState.Success)?.data ?: DashboardStats()
     val pullToRefreshState = rememberPullToRefreshState()
 
     PullToRefreshBox(
         isRefreshing = isRefreshing,
-        onRefresh = onRefresh,
+        onRefresh = {
+            haptics.success()
+            onRefresh()
+        },
         state = pullToRefreshState,
         indicator = {
             PullToRefreshDefaults.Indicator(
@@ -132,7 +137,10 @@ fun DashboardScreen(
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         IconButton(
-                            onClick = onRefresh,
+                            onClick = {
+                                haptics.tap()
+                                onRefresh()
+                            },
                             enabled = !isRefreshing,
                             modifier = Modifier
                                 .size(48.dp)
@@ -145,7 +153,10 @@ fun DashboardScreen(
                             )
                         }
                         OutlinedButton(
-                            onClick = onSignOut,
+                            onClick = {
+                                haptics.reject()
+                                onSignOut()
+                            },
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = RoseError),
                             border = BorderStroke(1.dp, RoseError.copy(alpha = 0.5f)),
                             modifier = Modifier.heightIn(min = 42.dp).testTag("dashboard_sign_out")
@@ -157,7 +168,10 @@ fun DashboardScreen(
                     }
                 } else {
                     Button(
-                        onClick = onOpenAuth,
+                        onClick = {
+                            haptics.tap()
+                            onOpenAuth()
+                        },
                         modifier = Modifier.heightIn(min = 44.dp).testTag("dashboard_login_cta")
                     ) {
                         Icon(Icons.Filled.Login, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -214,7 +228,10 @@ fun DashboardScreen(
 
         item {
             OutlinedButton(
-                onClick = onOpenPricing,
+                onClick = {
+                    haptics.tap()
+                    onOpenPricing()
+                },
                 modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).testTag("dashboard_pricing_button")
             ) {
                 Icon(Icons.Filled.RocketLaunch, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -228,7 +245,10 @@ fun DashboardScreen(
                 tabs.forEachIndexed { index, label ->
                     Tab(
                         selected = selectedTab == index,
-                        onClick = { selectedTab = index },
+                        onClick = {
+                            haptics.tap()
+                            selectedTab = index
+                        },
                         text = { Text(label, maxLines = 1) },
                         modifier = Modifier.testTag("dashboard_tab_$index")
                     )
@@ -256,7 +276,10 @@ fun DashboardScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Button(
-                            onClick = onOpenAuth,
+                            onClick = {
+                                haptics.tap()
+                                onOpenAuth()
+                            },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
                         ) {
                             Text("Sign In / Create Account")
@@ -284,7 +307,12 @@ fun DashboardScreen(
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 Text(dashboardState.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                                Button(onClick = onRefresh) {
+                                Button(
+                                    onClick = {
+                                        haptics.tap()
+                                        onRefresh()
+                                    }
+                                ) {
                                     Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(6.dp))
                                     Text("Refresh")
@@ -322,7 +350,8 @@ fun DashboardScreen(
                                                     innovation = item,
                                                     onClick = { onOpenDetail(item) },
                                                     onToggleLike = { onToggleLike(item) },
-                                                    onToggleBookmark = { onToggleBookmark(item) }
+                                                    onToggleBookmark = { onToggleBookmark(item) },
+                                                    analyticsSource = "dashboard_card"
                                                 )
                                             }
                                         }
@@ -336,7 +365,8 @@ fun DashboardScreen(
                                                     innovation = item,
                                                     onClick = { onOpenDetail(item) },
                                                     onToggleLike = { onToggleLike(item) },
-                                                    onToggleBookmark = { onToggleBookmark(item) }
+                                                    onToggleBookmark = { onToggleBookmark(item) },
+                                                    analyticsSource = "dashboard_card"
                                                 )
                                             }
                                         }

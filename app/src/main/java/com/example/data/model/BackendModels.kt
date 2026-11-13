@@ -118,7 +118,8 @@ data class CopilotMessage(
     val id: String,
     val isAssistant: Boolean,
     val content: String,
-    val timestamp: String
+    val timestamp: String,
+    val isError: Boolean = false
 )
 
 data class DigitalNdaRecord(

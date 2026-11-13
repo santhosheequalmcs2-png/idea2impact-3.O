@@ -17,6 +17,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.outlined.AutoAwesome
@@ -42,6 +44,8 @@ import androidx.compose.material.icons.outlined.BarChart
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -66,18 +70,22 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import androidx.credentials.CredentialManager
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -87,16 +95,23 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import coil.compose.AsyncImage
 import com.example.R
+import com.example.analytics.FirebaseAnalyticsTracker
+import com.example.analytics.LocalAnalyticsTracker
 import com.example.data.local.Idea2ImpactDatabase
 import com.example.data.model.UiState
+import com.example.data.preferences.NotificationLocalDataStore
 import com.example.data.preferences.ThemePreferences
 import com.example.data.preferences.TokenManager
 import com.example.data.repository.BackendRepository
+import com.example.ui.auth.attemptAutoSignIn
+import com.example.ui.auth.signOutWithCredentialClear
 import com.example.ui.components.BackendAuthModal
 import com.example.ui.components.LocalNavAnimatedVisibilityScope
 import com.example.ui.components.LocalSharedTransitionScope
 import com.example.ui.components.MovableAiPopup
+import com.example.ui.components.NotificationCenterSheet
 import com.example.ui.components.OpeningSplashOverlay
 import com.example.ui.screens.CopilotScreen
 import com.example.ui.screens.DashboardScreen
@@ -108,7 +123,9 @@ import com.example.ui.screens.PricingScreen
 import com.example.ui.screens.TalentScreen
 import com.example.ui.theme.Idea2ImpactTheme
 import com.example.ui.viewmodel.AppViewModel
+import com.example.util.LocalHapticFeedbackManager
 import com.example.util.StartupSoundPlayer
+import com.example.util.rememberHapticFeedbackManager
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -148,6 +165,9 @@ private fun routeOrder(route: String?): Int {
 @Composable
 fun Idea2ImpactApp() {
     val context = LocalContext.current
+    val authScope = rememberCoroutineScope()
+    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val analyticsTracker = remember(context) { FirebaseAnalyticsTracker(context) }
     val viewModel: AppViewModel = viewModel(
         factory = viewModelFactory {
             initializer {
@@ -155,6 +175,7 @@ fun Idea2ImpactApp() {
                 val database = Idea2ImpactDatabase.getInstance(app)
                 val tokenManager = TokenManager(app)
                 val themePreferences = ThemePreferences(app)
+                val notificationDataStore = NotificationLocalDataStore(app)
                 val repository = BackendRepository(
                     tokenManager = tokenManager,
                     innovationDao = database.innovationDao()
@@ -162,7 +183,9 @@ fun Idea2ImpactApp() {
                 AppViewModel(
                     repository = repository,
                     tokenManager = tokenManager,
-                    themePreferences = themePreferences
+                    themePreferences = themePreferences,
+                    notificationDataStore = notificationDataStore,
+                    analyticsTracker = analyticsTracker
                 )
             }
         }
@@ -171,6 +194,8 @@ fun Idea2ImpactApp() {
     val isDark by viewModel.isDarkTheme.collectAsStateWithLifecycle()
     val isSoundEnabled by viewModel.isSoundEnabled.collectAsStateWithLifecycle()
     val hasCompletedOnboarding by viewModel.hasCompletedOnboarding.collectAsStateWithLifecycle()
+    val notifications by viewModel.notifications.collectAsStateWithLifecycle()
+    val unreadNotificationsCount by viewModel.unreadNotificationsCount.collectAsStateWithLifecycle()
     val currentUser by viewModel.currentUser.collectAsStateWithLifecycle()
     val showAuthModal by viewModel.showAuthModal.collectAsStateWithLifecycle()
     val authError by viewModel.authError.collectAsStateWithLifecycle()
@@ -200,6 +225,7 @@ fun Idea2ImpactApp() {
     val useFastAiModel by viewModel.useFastAiModel.collectAsStateWithLifecycle()
     val copilotMessages by viewModel.copilotMessages.collectAsStateWithLifecycle()
     val isAiLoading by viewModel.isAiLoading.collectAsStateWithLifecycle()
+    val canRegenerateLastReply by viewModel.canRegenerateLastReply.collectAsStateWithLifecycle()
     val customApiKey by viewModel.customApiKey.collectAsStateWithLifecycle()
 
     val isBusy by viewModel.isActionBusy.collectAsStateWithLifecycle()
@@ -207,6 +233,7 @@ fun Idea2ImpactApp() {
 
     var showOpeningSplash by rememberSaveable { mutableStateOf(true) }
     var isAiPopupExpanded by rememberSaveable { mutableStateOf(false) }
+    var showNotificationsSheet by rememberSaveable { mutableStateOf(false) }
 
     BackHandler(enabled = isAiPopupExpanded) {
         isAiPopupExpanded = false
@@ -231,16 +258,57 @@ fun Idea2ImpactApp() {
         }
     }
 
+    LaunchedEffect(Unit) {
+        if (currentUser == null) {
+            attemptAutoSignIn(
+                context = context,
+                credentialManager = credentialManager,
+                onAuthSuccess = {
+                    viewModel.onGoogleAuthSuccess(isAutoSignIn = true)
+                },
+                onUnauthenticated = {},
+                scope = authScope
+            )
+        }
+    }
+
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRouteName = navBackStackEntry?.destination?.route.orEmpty()
+
+    var hasTrackedInitialOnboarding by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(hasCompletedOnboarding) {
+        if (hasCompletedOnboarding == false) {
+            analyticsTracker.logScreenView("onboarding", "OnboardingScreen")
+            if (!hasTrackedInitialOnboarding) {
+                hasTrackedInitialOnboarding = true
+                analyticsTracker.logOnboardingStarted(source = "first_launch")
+            }
+        }
+    }
+
+    LaunchedEffect(currentRouteName, hasCompletedOnboarding) {
+        if (hasCompletedOnboarding == true && currentRouteName.isNotBlank()) {
+            val screenName = when {
+                currentRouteName.contains("Home") -> "home"
+                currentRouteName.contains("Marketplace") -> "marketplace"
+                currentRouteName.contains("Copilot") -> "ai_copilot"
+                currentRouteName.contains("Talents") -> "talents"
+                currentRouteName.contains("Dashboard") -> "dashboard"
+                currentRouteName.contains("Detail") -> "innovation_detail"
+                currentRouteName.contains("Pricing") -> "pricing"
+                else -> currentRouteName.substringAfterLast('.')
+            }
+            analyticsTracker.logScreenView(screenName, currentRouteName.substringAfterLast('.'))
+        }
+    }
 
     // Exact 5 Bottom Navigation Tabs in exact requested order
     val bottomTabs = remember {
         listOf(
             BottomTab(AppRoute.Home, AppRoute.Home::class.qualifiedName.orEmpty(), "Home", Icons.Filled.Home, Icons.Outlined.Home, "nav_home"),
             BottomTab(AppRoute.Marketplace, AppRoute.Marketplace::class.qualifiedName.orEmpty(), "Marketplace", Icons.Filled.Explore, Icons.Outlined.Explore, "nav_marketplace"),
-            BottomTab(AppRoute.Copilot, AppRoute.Copilot::class.qualifiedName.orEmpty(), "AI Copilot", Icons.Filled.AutoAwesome, Icons.Outlined.AutoAwesome, "nav_copilot"),
+            BottomTab(AppRoute.Copilot, AppRoute.Copilot::class.qualifiedName.orEmpty(), "AI Sana", Icons.Filled.AutoAwesome, Icons.Outlined.AutoAwesome, "nav_copilot"),
             BottomTab(AppRoute.Talents, AppRoute.Talents::class.qualifiedName.orEmpty(), "Talents", Icons.Filled.Groups, Icons.Outlined.Groups, "nav_talents"),
             BottomTab(AppRoute.Dashboard, AppRoute.Dashboard::class.qualifiedName.orEmpty(), "Dashboard", Icons.Filled.BarChart, Icons.Outlined.BarChart, "nav_dashboard")
         )
@@ -248,7 +316,10 @@ fun Idea2ImpactApp() {
 
     val showMainChrome = !currentRouteName.contains("Detail") && !currentRouteName.contains("Pricing")
 
+    val hapticManager = rememberHapticFeedbackManager()
+
     fun navigateTopTab(tab: BottomTab) {
+        hapticManager.tap()
         StartupSoundPlayer.playTap(context)
         navController.navigate(tab.route) {
             popUpTo(AppRoute.Home) { saveState = true }
@@ -259,7 +330,11 @@ fun Idea2ImpactApp() {
 
     Idea2ImpactTheme(darkTheme = isDark) {
         SharedTransitionLayout {
-            CompositionLocalProvider(LocalSharedTransitionScope provides this@SharedTransitionLayout) {
+            CompositionLocalProvider(
+                LocalSharedTransitionScope provides this@SharedTransitionLayout,
+                LocalHapticFeedbackManager provides hapticManager,
+                LocalAnalyticsTracker provides analyticsTracker
+            ) {
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val useRail = maxWidth >= 700.dp
 
@@ -297,6 +372,7 @@ fun Idea2ImpactApp() {
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(10.dp))
                                             .clickable {
+                                                hapticManager.tap()
                                                 showOpeningSplash = true
                                                 StartupSoundPlayer.playAppOpenChime(context)
                                             }
@@ -321,14 +397,44 @@ fun Idea2ImpactApp() {
                                         Text(
                                             text = "IDEA2IMPACT",
                                             style = MaterialTheme.typography.titleMedium,
-                                            fontWeight = FontWeight.Bold
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
                                 },
                                 actions = {
                                     IconButton(
                                         onClick = {
+                                            hapticManager.tap()
+                                            StartupSoundPlayer.playTap(context)
+                                            showNotificationsSheet = true
+                                        },
+                                        modifier = Modifier.size(48.dp).testTag("header_notifications_button")
+                                    ) {
+                                        BadgedBox(
+                                            badge = {
+                                                if (unreadNotificationsCount > 0) {
+                                                    Badge {
+                                                        Text(
+                                                            text = if (unreadNotificationsCount > 9) "9+" else unreadNotificationsCount.toString()
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Notifications,
+                                                contentDescription = "Open notifications",
+                                                tint = if (unreadNotificationsCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+
+                                    IconButton(
+                                        onClick = {
                                             val nextEnabled = !isSoundEnabled
+                                            hapticManager.toggle(nextEnabled)
                                             StartupSoundPlayer.setSoundEnabled(context, nextEnabled)
                                             viewModel.setSoundEnabled(nextEnabled)
                                             if (nextEnabled) {
@@ -346,6 +452,7 @@ fun Idea2ImpactApp() {
 
                                     IconButton(
                                         onClick = {
+                                            hapticManager.toggle(!isDark)
                                             StartupSoundPlayer.playTap(context)
                                             viewModel.toggleTheme()
                                         },
@@ -361,12 +468,14 @@ fun Idea2ImpactApp() {
                                     if (user == null) {
                                         Button(
                                             onClick = {
+                                                hapticManager.tap()
                                                 StartupSoundPlayer.playTap(context)
                                                 viewModel.openAuthModal()
                                             },
                                             shape = RoundedCornerShape(10.dp),
+                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                                             modifier = Modifier
-                                                .padding(end = 12.dp)
+                                                .padding(end = 10.dp)
                                                 .heightIn(min = 38.dp)
                                                 .testTag("header_login_button")
                                         ) {
@@ -380,16 +489,30 @@ fun Idea2ImpactApp() {
                                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
                                                 modifier = Modifier
                                                     .size(38.dp)
-                                                    .clickable { showUserMenu = true }
+                                                    .clickable {
+                                                        hapticManager.tap()
+                                                        showUserMenu = true
+                                                    }
                                                     .testTag("header_user_avatar")
                                             ) {
                                                 Box(contentAlignment = Alignment.Center) {
-                                                    Text(
-                                                        text = user.name.take(1).uppercase(),
-                                                        style = MaterialTheme.typography.labelLarge,
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                                                    )
+                                                    if (!user.avatarUrl.isNullOrBlank()) {
+                                                        AsyncImage(
+                                                            model = user.avatarUrl,
+                                                            contentDescription = "${user.name} profile photo",
+                                                            contentScale = ContentScale.Crop,
+                                                            modifier = Modifier
+                                                                .fillMaxSize()
+                                                                .clip(CircleShape)
+                                                        )
+                                                    } else {
+                                                        Text(
+                                                            text = user.name.take(1).uppercase(),
+                                                            style = MaterialTheme.typography.labelLarge,
+                                                            fontWeight = FontWeight.Bold,
+                                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                                        )
+                                                    }
                                                 }
                                             }
 
@@ -407,6 +530,7 @@ fun Idea2ImpactApp() {
                                                 DropdownMenuItem(
                                                     text = { Text("Plans & Pricing") },
                                                     onClick = {
+                                                        hapticManager.tap()
                                                         showUserMenu = false
                                                         navController.navigate(AppRoute.Pricing)
                                                     }
@@ -414,8 +538,14 @@ fun Idea2ImpactApp() {
                                                 DropdownMenuItem(
                                                     text = { Text("Sign Out") },
                                                     onClick = {
+                                                        hapticManager.reject()
                                                         showUserMenu = false
-                                                        viewModel.logout()
+                                                        signOutWithCredentialClear(
+                                                            credentialManager = credentialManager,
+                                                            scope = authScope
+                                                        ) {
+                                                            viewModel.logout()
+                                                        }
                                                     }
                                                 )
                                             }
@@ -501,11 +631,11 @@ fun Idea2ImpactApp() {
                                     entranceReady = !showOpeningSplash && hasCompletedOnboarding == true,
                                     onOpenDetail = { item ->
                                         StartupSoundPlayer.playTap(context)
-                                        viewModel.openInnovationDetail(item)
+                                        viewModel.openInnovationDetail(item, source = "home")
                                         navController.navigate(AppRoute.Detail)
                                     },
                                     onExploreInnovations = { cat ->
-                                        viewModel.setSelectedCategory(cat)
+                                        viewModel.setSelectedCategory(cat, source = "home_category")
                                         navigateTopTab(bottomTabs[1])
                                     },
                                     onMeetBuilders = {
@@ -517,6 +647,7 @@ fun Idea2ImpactApp() {
                                     },
                                     onReplayOnboarding = {
                                         StartupSoundPlayer.playTap(context)
+                                        hasTrackedInitialOnboarding = true
                                         viewModel.replayOnboarding()
                                     }
                                 )
@@ -536,7 +667,11 @@ fun Idea2ImpactApp() {
                                     onSearchChange = { viewModel.setSearchQuery(it) },
                                     onCategoryChange = {
                                         StartupSoundPlayer.playTap(context)
-                                        viewModel.setSelectedCategory(it)
+                                        viewModel.setSelectedCategory(it, source = "filter_chip")
+                                    },
+                                    onCycleCategory = {
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.setSelectedCategory(it, source = "tesseract_3d")
                                     },
                                     onStageChange = {
                                         StartupSoundPlayer.playTap(context)
@@ -552,11 +687,19 @@ fun Idea2ImpactApp() {
                                     },
                                     onRetry = {
                                         StartupSoundPlayer.playTap(context)
-                                        viewModel.refreshMarketplace()
+                                        viewModel.refreshMarketplace(source = "retry_button")
+                                    },
+                                    onPullRefresh = {
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.refreshMarketplace(source = "pull_to_refresh")
+                                    },
+                                    onOfflineSync = {
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.refreshMarketplace(source = "offline_sync")
                                     },
                                     onOpenDetail = { item ->
                                         StartupSoundPlayer.playTap(context)
-                                        viewModel.openInnovationDetail(item)
+                                        viewModel.openInnovationDetail(item, source = "marketplace")
                                         navController.navigate(AppRoute.Detail)
                                     },
                                     onToggleLike = {
@@ -580,21 +723,35 @@ fun Idea2ImpactApp() {
                                     availableInnovations = availableInnovations,
                                     focusedInnovation = focusedInnovation,
                                     useFastModel = useFastAiModel,
+                                    canRegenerate = canRegenerateLastReply,
                                     onSelectFocusedInnovation = {
                                         StartupSoundPlayer.playTap(context)
                                         viewModel.setFocusedInnovation(it)
                                     },
                                     onToggleFastModel = {
                                         StartupSoundPlayer.playTap(context)
-                                        viewModel.setFastAiModel(it)
+                                        viewModel.setFastAiModel(it, surface = "full_screen")
                                     },
                                     onSaveApiKey = {
                                         StartupSoundPlayer.playSuccess(context)
                                         viewModel.saveCustomApiKey(it)
                                     },
-                                    onSendPrompt = { prompt, bitmap ->
+                                    onSendPrompt = { prompt, bitmap, promptSource ->
                                         StartupSoundPlayer.playTap(context)
-                                        viewModel.sendCopilotPrompt(prompt, bitmap)
+                                        viewModel.sendCopilotPrompt(
+                                            prompt = prompt,
+                                            attachedImage = bitmap,
+                                            promptSource = promptSource,
+                                            isPopup = false
+                                        )
+                                    },
+                                    onStopGeneration = {
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.stopCopilotGeneration()
+                                    },
+                                    onRegenerateLast = {
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.regenerateLastCopilotReply(isPopup = false)
                                     },
                                     onResetChat = {
                                         StartupSoundPlayer.playTap(context)
@@ -641,7 +798,7 @@ fun Idea2ImpactApp() {
                                     },
                                     onOpenDetail = { item ->
                                         StartupSoundPlayer.playTap(context)
-                                        viewModel.openInnovationDetail(item)
+                                        viewModel.openInnovationDetail(item, source = "dashboard")
                                         navController.navigate(AppRoute.Detail)
                                     },
                                     onToggleLike = {
@@ -658,7 +815,12 @@ fun Idea2ImpactApp() {
                                     },
                                     onSignOut = {
                                         StartupSoundPlayer.playTap(context)
-                                        viewModel.logout()
+                                        signOutWithCredentialClear(
+                                            credentialManager = credentialManager,
+                                            scope = authScope
+                                        ) {
+                                            viewModel.logout()
+                                        }
                                     }
                                 )
                             }
@@ -743,6 +905,7 @@ fun Idea2ImpactApp() {
                     isExpanded = isAiPopupExpanded,
                     onExpandedChange = { expanded ->
                         StartupSoundPlayer.playTap(context)
+                        analyticsTracker.logCopilotPopupToggled(expanded)
                         isAiPopupExpanded = expanded
                     },
                     messages = copilotMessages,
@@ -751,15 +914,66 @@ fun Idea2ImpactApp() {
                     activeContext = focusedInnovation ?: selectedDetail,
                     onToggleFastModel = {
                         StartupSoundPlayer.playTap(context)
-                        viewModel.setFastAiModel(it)
+                        viewModel.setFastAiModel(it, surface = "floating_popup")
                     },
-                    onSendPrompt = { prompt ->
+                    onSendPrompt = { prompt, promptSource ->
                         StartupSoundPlayer.playTap(context)
-                        viewModel.sendCopilotPrompt(prompt)
+                        viewModel.sendCopilotPrompt(
+                            prompt = prompt,
+                            promptSource = promptSource,
+                            isPopup = true
+                        )
+                    },
+                    onStopGeneration = {
+                        StartupSoundPlayer.playTap(context)
+                        viewModel.stopCopilotGeneration()
                     },
                     onOpenFullCopilot = {
                         isAiPopupExpanded = false
                         navigateTopTab(bottomTabs[2])
+                    }
+                )
+            }
+
+            if (showNotificationsSheet && !showOpeningSplash && hasCompletedOnboarding == true) {
+                NotificationCenterSheet(
+                    alerts = notifications,
+                    unreadCount = unreadNotificationsCount,
+                    onDismiss = { showNotificationsSheet = false },
+                    onAlertClick = { alert ->
+                        hapticManager.tap()
+                        StartupSoundPlayer.playTap(context)
+                        viewModel.markNotificationRead(alert.id)
+                        val targetId = alert.innovationId
+                        if (!targetId.isNullOrBlank()) {
+                            val match = availableInnovations.firstOrNull { it.id == targetId }
+                            if (match != null) {
+                                showNotificationsSheet = false
+                                viewModel.openInnovationDetail(match, source = "notification")
+                                navController.navigate(AppRoute.Detail)
+                            }
+                        }
+                    },
+                    onMarkAllRead = {
+                        hapticManager.success()
+                        StartupSoundPlayer.playTap(context)
+                        viewModel.markAllNotificationsRead()
+                    },
+                    onDeleteAlert = { id ->
+                        hapticManager.reject()
+                        StartupSoundPlayer.playTap(context)
+                        viewModel.deleteNotification(id)
+                    },
+                    onClearAll = {
+                        hapticManager.reject()
+                        StartupSoundPlayer.playTap(context)
+                        viewModel.clearAllNotifications()
+                    },
+                    onSyncUpdates = {
+                        hapticManager.tap()
+                        StartupSoundPlayer.playTap(context)
+                        viewModel.refreshMarketplace()
+                        viewModel.loadDashboardStats(isPullRefresh = true)
                     }
                 )
             }
@@ -770,6 +984,8 @@ fun Idea2ImpactApp() {
                     errorMessage = authError,
                     onLogin = { email, password -> viewModel.login(email, password) },
                     onRegister = { name, email, password -> viewModel.register(name, email, password) },
+                    onGoogleSignInSuccess = { viewModel.onGoogleAuthSuccess() },
+                    onGoogleSignInError = { err -> viewModel.setAuthError(err) },
                     onDismiss = { viewModel.dismissAuthModal() }
                 )
             }

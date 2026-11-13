@@ -33,6 +33,7 @@ import androidx.compose.ui.unit.dp
 import com.example.ui.components.TierDiamond3D
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.GoldAmber
+import com.example.util.LocalHapticFeedbackManager
 
 private data class PricingTier(
     val name: String,
@@ -93,11 +94,17 @@ fun PricingScreen(
         )
     )
 
+    val haptics = LocalHapticFeedbackManager.current
     Column(modifier = Modifier.fillMaxSize()) {
         TopAppBar(
             title = { Text("Plans & Pricing") },
             navigationIcon = {
-                IconButton(onClick = onBack) {
+                IconButton(
+                    onClick = {
+                        haptics.tap()
+                        onBack()
+                    }
+                ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                 }
             }

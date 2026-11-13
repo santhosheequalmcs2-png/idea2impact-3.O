@@ -23,16 +23,22 @@ object StartupSoundPlayer {
     private var isTapLoaded = false
     @Volatile
     private var isSuccessLoaded = false
+    @Volatile
+    private var cachedSoundEnabled: Boolean? = null
 
     fun isSoundEnabled(context: Context): Boolean {
-        return runCatching {
+        cachedSoundEnabled?.let { return it }
+        val loaded = runCatching {
             context.applicationContext
                 .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getBoolean(KEY_SOUND_ENABLED, true)
         }.getOrDefault(true)
+        cachedSoundEnabled = loaded
+        return loaded
     }
 
     fun setSoundEnabled(context: Context, enabled: Boolean) {
+        cachedSoundEnabled = enabled
         runCatching {
             context.applicationContext
                 .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

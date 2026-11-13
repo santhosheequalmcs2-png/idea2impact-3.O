@@ -282,7 +282,7 @@ fun OpeningSplashOverlay(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    listOf("Breakthrough IP", "Gemini AI", "Elite Builders").forEach { tag ->
+                    listOf("Breakthrough IP", "AI Sana", "Elite Builders").forEach { tag ->
                         Surface(
                             color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),

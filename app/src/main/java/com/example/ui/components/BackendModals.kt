@@ -54,6 +54,7 @@ import com.example.data.model.ExactCategories
 import com.example.data.model.PitchDeckResult
 import com.example.data.model.UiState
 import com.example.ui.theme.EmeraldSuccess
+import com.example.util.LocalHapticFeedbackManager
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,6 +64,7 @@ fun CollaborationProposalModal(
     onSubmit: (type: String, amount: String, message: String, contactInfo: String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val haptics = LocalHapticFeedbackManager.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var expanded by remember { mutableStateOf(false) }
     var selectedType by remember { mutableStateOf(ExactCategories.proposalTypes.first()) }
@@ -103,14 +105,22 @@ fun CollaborationProposalModal(
                         )
                     }
                 }
-                IconButton(onClick = onDismiss) {
+                IconButton(
+                    onClick = {
+                        haptics.tap()
+                        onDismiss()
+                    }
+                ) {
                     Icon(Icons.Filled.Close, contentDescription = "Close proposal modal")
                 }
             }
 
             ExposedDropdownMenuBox(
                 expanded = expanded,
-                onExpandedChange = { expanded = !expanded }
+                onExpandedChange = {
+                    haptics.tap()
+                    expanded = !expanded
+                }
             ) {
                 OutlinedTextField(
                     value = selectedType,
@@ -131,6 +141,7 @@ fun CollaborationProposalModal(
                         DropdownMenuItem(
                             text = { Text(option) },
                             onClick = {
+                                haptics.tap()
                                 selectedType = option
                                 expanded = false
                             }
@@ -168,7 +179,10 @@ fun CollaborationProposalModal(
             )
 
             Button(
-                onClick = { onSubmit(selectedType, amount, message, contactInfo) },
+                onClick = {
+                    haptics.success()
+                    onSubmit(selectedType, amount, message, contactInfo)
+                },
                 enabled = !isBusy && message.trim().length >= 5,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("proposal_submit_button")
             ) {
@@ -195,6 +209,7 @@ fun MutualNdaModal(
     onSign: (signerName: String, signerOrg: String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val haptics = LocalHapticFeedbackManager.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var signerName by remember { mutableStateOf(defaultSignerName) }
     var signerOrg by remember { mutableStateOf("") }
@@ -233,7 +248,12 @@ fun MutualNdaModal(
                         )
                     }
                 }
-                IconButton(onClick = onDismiss) {
+                IconButton(
+                    onClick = {
+                        haptics.tap()
+                        onDismiss()
+                    }
+                ) {
                     Icon(Icons.Filled.Close, contentDescription = "Close NDA modal")
                 }
             }
@@ -259,7 +279,13 @@ fun MutualNdaModal(
                         Text("Timestamp: ${existingRecord.signedAt}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-                Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                Button(
+                    onClick = {
+                        haptics.tap()
+                        onDismiss()
+                    },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                ) {
                     Text("Done")
                 }
             } else {
@@ -294,7 +320,14 @@ fun MutualNdaModal(
                 )
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = agreed, onCheckedChange = { agreed = it }, modifier = Modifier.testTag("nda_agree_checkbox"))
+                    Checkbox(
+                        checked = agreed,
+                        onCheckedChange = {
+                            haptics.toggle(it)
+                            agreed = it
+                        },
+                        modifier = Modifier.testTag("nda_agree_checkbox")
+                    )
                     Text(
                         "I legally accept the Mutual Non-Disclosure Agreement terms.",
                         style = MaterialTheme.typography.bodySmall,
@@ -303,7 +336,10 @@ fun MutualNdaModal(
                 }
 
                 Button(
-                    onClick = { onSign(signerName, signerOrg) },
+                    onClick = {
+                        haptics.success()
+                        onSign(signerName, signerOrg)
+                    },
                     enabled = agreed && signerName.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("nda_confirm_button")
                 ) {
@@ -321,6 +357,7 @@ fun PitchDeckModal(
     onRetry: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val haptics = LocalHapticFeedbackManager.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
@@ -349,7 +386,12 @@ fun PitchDeckModal(
                     Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     Text("5-Slide AI Investor Pitch Deck", style = MaterialTheme.typography.titleMedium)
                 }
-                IconButton(onClick = onDismiss) {
+                IconButton(
+                    onClick = {
+                        haptics.tap()
+                        onDismiss()
+                    }
+                ) {
                     Icon(Icons.Filled.Close, contentDescription = "Close pitch deck modal")
                 }
             }
@@ -381,7 +423,12 @@ fun PitchDeckModal(
                     ) {
                         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(state.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                            Button(onClick = onRetry) { Text("Retry") }
+                            Button(
+                                onClick = {
+                                    haptics.tap()
+                                    onRetry()
+                                }
+                            ) { Text("Retry") }
                         }
                     }
                 }

@@ -87,6 +87,7 @@ import com.example.ui.theme.CobaltBlue
 import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.PurpleGlow
+import com.example.util.LocalHapticFeedbackManager
 import com.example.util.StartupSoundPlayer
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -104,6 +105,7 @@ fun HomeScreen(
     var heroVisible by remember { mutableStateOf(false) }
     var metricsVisible by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val haptics = LocalHapticFeedbackManager.current
 
     LaunchedEffect(entranceReady) {
         if (entranceReady) {
@@ -233,7 +235,12 @@ fun HomeScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("Featured Breakthroughs", style = MaterialTheme.typography.titleLarge)
-                        TextButton(onClick = { onExploreInnovations("All") }) {
+                        TextButton(
+                            onClick = {
+                                haptics.tap()
+                                onExploreInnovations("All")
+                            }
+                        ) {
                             Text("Explore All")
                             Spacer(Modifier.width(4.dp))
                             Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -243,7 +250,10 @@ fun HomeScreen(
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         items(featuredInnovations.take(6), key = { it.id }) { item ->
                             Surface(
-                                onClick = { onOpenDetail(item) },
+                                onClick = {
+                                    haptics.tap()
+                                    onOpenDetail(item)
+                                },
                                 color = MaterialTheme.colorScheme.surface,
                                 tonalElevation = 2.dp,
                                 shadowElevation = 2.dp,
@@ -317,6 +327,7 @@ fun HomeScreen(
                                         )
                                         IconButton(
                                             onClick = {
+                                                haptics.tap()
                                                 StartupSoundPlayer.playTap(context)
                                                 shareInnovationSheet(context, item)
                                             },
@@ -356,7 +367,10 @@ fun HomeScreen(
                 ) {
                     Text("How It Works", style = MaterialTheme.typography.titleLarge)
                     TextButton(
-                        onClick = onReplayOnboarding,
+                        onClick = {
+                            haptics.tap()
+                            onReplayOnboarding()
+                        },
                         modifier = Modifier.testTag("home_replay_onboarding_button")
                     ) {
                         Text("Process Tour")
@@ -376,7 +390,7 @@ fun HomeScreen(
                     ),
                     Triple(
                         "02. AI Opportunity Match",
-                        "Gemini AI scans prior-art, calculates TAM/SAM/SOM, and maps investor fit.",
+                        "AI Sana scans prior-art, calculates TAM/SAM/SOM, and maps investor fit.",
                         R.drawable.ic_brand_spark_badge to PurpleGlow.copy(alpha = 0.14f)
                     ),
                     Triple(
@@ -446,7 +460,12 @@ fun HomeScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Explore Categories", style = MaterialTheme.typography.titleLarge)
-                    TextButton(onClick = { onExploreInnovations("All") }) {
+                    TextButton(
+                        onClick = {
+                            haptics.tap()
+                            onExploreInnovations("All")
+                        }
+                    ) {
                         Text("View All")
                         Spacer(Modifier.width(4.dp))
                         Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -461,7 +480,10 @@ fun HomeScreen(
                 ) {
                     categories.forEach { cat ->
                         Surface(
-                            onClick = { onExploreInnovations(cat.name) },
+                            onClick = {
+                                haptics.tap()
+                                onExploreInnovations(cat.name)
+                            },
                             color = MaterialTheme.colorScheme.surface,
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                             shape = RoundedCornerShape(16.dp),
@@ -521,7 +543,10 @@ fun HomeScreen(
         // 6. Membership Plans Card
         item {
             Surface(
-                onClick = onOpenPricing,
+                onClick = {
+                    haptics.tap()
+                    onOpenPricing()
+                },
                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
                 shape = RoundedCornerShape(18.dp),
@@ -553,6 +578,7 @@ private fun HeroCopyColumn(
     onMeetBuilders: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val haptics = LocalHapticFeedbackManager.current
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -614,11 +640,17 @@ private fun HeroCopyColumn(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 HeroPrimaryExploreButton(
-                    onClick = { onExploreInnovations("All") },
+                    onClick = {
+                        haptics.tap()
+                        onExploreInnovations("All")
+                    },
                     modifier = Modifier.weight(1f)
                 )
                 OutlinedButton(
-                    onClick = onMeetBuilders,
+                    onClick = {
+                        haptics.tap()
+                        onMeetBuilders()
+                    },
                     shape = RoundedCornerShape(14.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                     modifier = Modifier
@@ -634,11 +666,17 @@ private fun HeroCopyColumn(
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 HeroPrimaryExploreButton(
-                    onClick = { onExploreInnovations("All") },
+                    onClick = {
+                        haptics.tap()
+                        onExploreInnovations("All")
+                    },
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedButton(
-                    onClick = onMeetBuilders,
+                    onClick = {
+                        haptics.tap()
+                        onMeetBuilders()
+                    },
                     shape = RoundedCornerShape(14.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                     modifier = Modifier

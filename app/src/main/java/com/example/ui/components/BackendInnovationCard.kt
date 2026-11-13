@@ -45,10 +45,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -56,9 +54,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.R
+import com.example.analytics.LocalAnalyticsTracker
 import com.example.data.model.BackendInnovation
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.RoseError
+import com.example.util.LocalHapticFeedbackManager
 import com.example.util.StartupSoundPlayer
 import java.text.NumberFormat
 import java.util.Locale
@@ -102,10 +102,12 @@ fun BackendInnovationCard(
     onToggleLike: () -> Unit,
     onToggleBookmark: () -> Unit,
     modifier: Modifier = Modifier,
+    analyticsSource: String = "marketplace_card",
     onShare: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
-    val haptics = LocalHapticFeedback.current
+    val haptics = LocalHapticFeedbackManager.current
+    val analytics = LocalAnalyticsTracker.current
     val likeScale by animateFloatAsState(
         targetValue = if (innovation.isLiked) 1.18f else 1f,
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
@@ -118,7 +120,10 @@ fun BackendInnovationCard(
     )
 
     Surface(
-        onClick = onClick,
+        onClick = {
+            haptics.tap()
+            onClick()
+        },
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 2.dp,
@@ -340,7 +345,7 @@ fun BackendInnovationCard(
 
                         IconButton(
                             onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptics.heartLike(willBeLiked = !innovation.isLiked)
                                 onToggleLike()
                             },
                             modifier = Modifier
@@ -369,7 +374,7 @@ fun BackendInnovationCard(
 
                         IconButton(
                             onClick = {
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                haptics.toggle(!innovation.isBookmarked)
                                 onToggleBookmark()
                             },
                             modifier = Modifier.size(48.dp).testTag("bookmark_button_${innovation.id}")
@@ -384,8 +389,14 @@ fun BackendInnovationCard(
 
                         IconButton(
                             onClick = {
+                                haptics.tap()
                                 StartupSoundPlayer.playTap(context)
-                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                analytics.logInnovationShared(
+                                    innovationId = innovation.id,
+                                    title = innovation.title,
+                                    category = innovation.category,
+                                    source = analyticsSource
+                                )
                                 if (onShare != null) onShare() else shareInnovationSheet(context, innovation)
                             },
                             modifier = Modifier.size(48.dp).testTag("share_button_${innovation.id}")

@@ -58,6 +58,7 @@ import com.example.data.model.ExactCategories
 import com.example.data.model.UiState
 import com.example.ui.components.BuilderConstellation3D
 import com.example.ui.components.TalentSkeletonList
+import com.example.util.LocalHapticFeedbackManager
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -70,6 +71,7 @@ fun TalentScreen(
 ) {
     var connectTarget by remember { mutableStateOf<BackendTalent?>(null) }
     var searchQuery by remember { mutableStateOf("") }
+    val haptics = LocalHapticFeedbackManager.current
 
     Column(modifier = Modifier.fillMaxSize()) {
         Column(
@@ -95,7 +97,12 @@ fun TalentScreen(
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = {
                     if (searchQuery.isNotBlank()) {
-                        IconButton(onClick = { searchQuery = "" }) {
+                        IconButton(
+                            onClick = {
+                                haptics.tap()
+                                searchQuery = ""
+                            }
+                        ) {
                             Icon(Icons.Filled.Close, contentDescription = "Clear search")
                         }
                     }
@@ -109,7 +116,10 @@ fun TalentScreen(
                 items(ExactCategories.talentRoles) { role ->
                     FilterChip(
                         selected = selectedRole == role,
-                        onClick = { onRoleChange(role) },
+                        onClick = {
+                            haptics.tap()
+                            onRoleChange(role)
+                        },
                         label = { Text(role) },
                         modifier = Modifier.heightIn(min = 40.dp)
                     )
@@ -119,7 +129,10 @@ fun TalentScreen(
 
         PullToRefreshBox(
             isRefreshing = false,
-            onRefresh = onRetry,
+            onRefresh = {
+                haptics.success()
+                onRetry()
+            },
             modifier = Modifier.weight(1f).fillMaxWidth()
         ) {
         when (talentsState) {
@@ -130,7 +143,13 @@ fun TalentScreen(
                 Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text(talentsState.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                        Button(onClick = onRetry, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Button(
+                            onClick = {
+                                haptics.tap()
+                                onRetry()
+                            },
+                            modifier = Modifier.heightIn(min = 48.dp)
+                        ) {
                             Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("Retry")
@@ -167,6 +186,7 @@ fun TalentScreen(
                             if (searchQuery.isNotBlank() || selectedRole != "All") {
                                 OutlinedButton(
                                     onClick = {
+                                        haptics.tap()
                                         searchQuery = ""
                                         onRoleChange("All")
                                     },
@@ -187,6 +207,7 @@ fun TalentScreen(
                             BuilderConstellation3D(
                                 selectedRole = selectedRole,
                                 onCycleRole = {
+                                    haptics.tap()
                                     val roles = ExactCategories.talentRoles
                                     val idx = roles.indexOf(selectedRole)
                                     onRoleChange(roles[(idx + 1) % roles.size])
@@ -317,7 +338,10 @@ fun TalentScreen(
                                         }
 
                                         OutlinedButton(
-                                            onClick = { connectTarget = talent },
+                                            onClick = {
+                                                haptics.tap()
+                                                connectTarget = talent
+                                            },
                                             modifier = Modifier.heightIn(min = 48.dp)
                                         ) {
                                             Text("Connect / Send Proposal")
@@ -359,6 +383,7 @@ fun TalentScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        haptics.success()
                         onSendConnectMessage(target, note)
                         connectTarget = null
                     },
@@ -368,7 +393,12 @@ fun TalentScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { connectTarget = null }) {
+                TextButton(
+                    onClick = {
+                        haptics.tap()
+                        connectTarget = null
+                    }
+                ) {
                     Text("Cancel")
                 }
             }

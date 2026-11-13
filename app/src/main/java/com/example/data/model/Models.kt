@@ -384,6 +384,6 @@ data class AiChatMessage(
     val isAssistant: Boolean,
     val content: String,
     val timestampLabel: String,
-    val engineLabel: String = "Gemini 3.8 Flash",
+    val engineLabel: String = "AI Sana",
     val isStreaming: Boolean = false
 )

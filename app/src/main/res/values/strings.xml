@@ -7,23 +7,25 @@
     <string name="cd_hero_lottie_exchange">Animated global innovation exchange network</string>
     <string name="cd_empty_marketplace">No innovations found illustration</string>
 
-    <string name="auth_live_badge">LIVE INNOVATION ECOSYSTEM · POWERED BY GEMINI</string>
+    <string name="auth_live_badge">LIVE INNOVATION ECOSYSTEM · POWERED BY AI SANA</string>
     <string name="auth_headline">Where bold ideas find their next step.</string>
     <string name="auth_subheadline">Publish protected concepts, explore interactive prototypes, execute digital NDAs, and connect with builders and investors.</string>
     <string name="auth_feat_ip_title">Cryptographic IP Timestamps</string>
     <string name="auth_feat_ip_desc">SHA-256 registry proof of creation for every disclosure.</string>
     <string name="auth_feat_nda_title">Confidential Deal Rooms</string>
     <string name="auth_feat_nda_desc">Sign mutual NDAs digitally to unlock specs and models.</string>
-    <string name="auth_feat_ai_title">Impact AI Copilot</string>
+    <string name="auth_feat_ai_title">Impact AI Sana</string>
     <string name="auth_feat_ai_desc">Patent scans, TAM sizing, and structured Investor One-Pagers.</string>
     <string name="auth_checking_session">Checking session…</string>
     <string name="auth_signing_in">Signing in with Google…</string>
     <string name="action_sign_in_google">Sign in with Google</string>
+    <string name="action_sign_up_google">Sign up with Google</string>
+    <string name="action_continue_google">Continue with Google</string>
 
     <string name="nav_home">Home</string>
     <string name="nav_explore">Explore</string>
     <string name="nav_talents">Talents</string>
-    <string name="nav_ai">AI Copilot</string>
+    <string name="nav_ai">AI Sana</string>
     <string name="nav_workspace">Workspace</string>
 
     <string name="cad_viewer_title">Interactive 3D CAD Explorer</string>
@@ -38,7 +40,7 @@
     <string name="onboard_step_1_desc">Publish raw concepts or technical prototypes with cryptographic SHA-256 timestamps and mutual zero-knowledge NDA gates.</string>
     <string name="onboard_step_2_label">Match</string>
     <string name="onboard_step_2_title">AI Opportunity Match</string>
-    <string name="onboard_step_2_desc">Gemini evaluates prior-art whitespace, estimates TAM/SAM/SOM demand, and matches your concept with high-conviction backers.</string>
+    <string name="onboard_step_2_desc">AI Sana evaluates prior-art whitespace, estimates TAM/SAM/SOM demand, and matches your concept with high-conviction backers.</string>
     <string name="onboard_step_3_label">Assemble</string>
     <string name="onboard_step_3_title">Assemble Elite Builders</string>
     <string name="onboard_step_3_desc">Partner with vetted robotics engineers, firmware architects, industrial designers, and patent attorneys ready to build.</string>

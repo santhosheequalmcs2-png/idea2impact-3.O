@@ -786,7 +786,7 @@ fun InvestorOnePagerDialog(
                         Icon(Icons.Filled.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Column {
                             Text("AI Investor One-Pager", style = MaterialTheme.typography.titleMedium)
-                            Text("Structured via Gemini 3.8 Flash", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Structured via AI Sana", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     IconButton(onClick = onDismiss) {

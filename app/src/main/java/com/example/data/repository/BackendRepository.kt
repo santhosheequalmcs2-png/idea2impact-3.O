@@ -608,7 +608,7 @@ class BackendRepository(
             ?: obj.obj("data")?.str("reply")
             ?: obj.obj("data")?.str("response")
             ?: obj.obj("data")?.str("text")
-            ?: "Response received from Gemini 2.0 Flash."
+            ?: "Response received from AI Sana."
     }
 
     // --- JSON Parsers ---

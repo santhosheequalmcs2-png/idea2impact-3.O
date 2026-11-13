@@ -72,11 +72,6 @@ class MainViewModel(
     }
 
     val isDarkTheme: StateFlow<Boolean> = themePreferences.isDarkTheme
-        .stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
-            initialValue = false
-        )
 
     val publicInnovationsState: StateFlow<UiState<List<Innovation>>> =
         repository.observePublicInnovations().toUiStateFlow("marketplace innovations")
@@ -195,8 +190,10 @@ class MainViewModel(
     }
 
     fun toggleTheme() {
-        viewModelScope.launch {
-            themePreferences.setDarkTheme(!isDarkTheme.value)
+        val next = !isDarkTheme.value
+        themePreferences.setDarkThemeImmediate(next)
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            themePreferences.persistDarkTheme(next)
         }
     }
 
@@ -546,7 +543,7 @@ class MainViewModel(
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "AI Copilot error", e)
-                val errMsg = e.localizedMessage ?: "Gemini AI service failed. Check App Check & network."
+                val errMsg = e.localizedMessage ?: "AI Sana service failed. Check App Check & network."
                 _aiMessages.update { list ->
                     list.map { msg ->
                         if (msg.id == assistantMsgId) {
@@ -593,11 +590,11 @@ class MainViewModel(
         return AiChatMessage(
             id = "welcome",
             isAssistant = true,
-            content = "Hi! I'm your **Impact AI Copilot**, powered by Firebase AI Logic (`gemini-3.8-flash`).\n\n" +
+            content = "Hi! I'm **AI Sana**, your intelligent innovation advisor.\n\n" +
                 "I specialize in **patent novelty scans**, **TAM/SAM/SOM market sizing**, **investor pitch decks**, and **prototyping blueprints**.\n\n" +
                 "Tap any quick prompt below or describe your innovation!",
             timestampLabel = SecurityCryptoUtils.formatTime(),
-            engineLabel = "Gemini 3.8 Flash"
+            engineLabel = "AI Sana"
         )
     }
 

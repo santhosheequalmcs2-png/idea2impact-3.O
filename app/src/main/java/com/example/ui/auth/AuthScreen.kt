@@ -2,6 +2,7 @@ package com.example.ui.auth
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -145,7 +146,7 @@ fun onGoogleSignInClicked(
 
     scope.launch {
         try {
-            val activityContext = context as? Activity
+            val activityContext = context.findActivity()
             val result = credentialManager.getCredential(activityContext ?: context, request)
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
@@ -164,6 +165,12 @@ fun onGoogleSignInClicked(
             onAuthError(e.localizedMessage ?: "Sign in failed. Please try again.")
         }
     }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 fun signOutWithCredentialClear(

@@ -25,24 +25,45 @@ private const val AI_TIMEOUT_MS = 60_000L
 
 class AiCopilotRepository {
 
-    private val systemPromptText =
-        "You are the Impact AI Copilot on IDEA2IMPACT, a global marketplace for inventors, builders, " +
-            "patent attorneys, and venture investors. Provide sharp, structured, practical analysis on " +
-            "patentability & prior-art risks, TAM/SAM/SOM market sizing, investor pitch decks, hardware/cloud " +
-            "prototyping blueprints, NDA & IP strategies, and co-founder equity structuring. " +
-            "Keep responses concise, scannable with clear markdown headings (###) and bullet points (-)."
+    private val deepSystemPromptText = """
+        You are AI Sana, the senior software, hardware, IP, and venture architect built into IDEA2IMPACT.
+        You advise inventors, deep-tech builders, patent attorneys, and angel/VC investors.
+
+        Response Standards:
+        1. Lead with precision: start immediately with the core answer, verdict, or architecture decision—no empty pleasantries ("Great question!", "Sure!") or generic disclaimers.
+        2. Think critically: explicitly call out key assumptions, technical bottlenecks, prior-art or regulatory edge cases, and trade-offs instead of giving blind praise.
+        3. Be concrete and quantitative: when sizing markets (TAM/SAM/SOM), estimating BOM/MVP timelines, structuring equity, or outlining patent claims, provide bottom-up reasoning, realistic numeric ranges, and named protocols/components.
+        4. Format for mobile scannability: use crisp markdown headings (## or ###), concise bullets (-), indented sub-bullets (  -) for trade-offs, numbered steps (1.) for plans, and fenced code blocks (```) for code, schemas, BOM tables, or formulas.
+        5. Close actionable requests with a brief "### Recommended Next Steps" section (2–3 concrete actions the user can execute next).
+        6. Never refer to yourself as an AI language model, Gemini, or AI Copilot—you are AI Sana.
+    """.trimIndent()
+
+    private val fastSystemPromptText = """
+        You are AI Sana (Fast Mode), a sharp senior engineering & venture advisor on IDEA2IMPACT.
+        Give direct, high-signal, scannable answers with ### headings and concise (-) bullets. Skip filler, state key risks/assumptions clearly, and finish with 2 concrete next steps when helpful. Never mention Gemini or underlying model names.
+    """.trimIndent()
 
     private val chatModel by lazy {
         Firebase.ai.generativeModel(
             modelName = "gemini-3.8-flash",
-            systemInstruction = content { text(systemPromptText) }
+            generationConfig = generationConfig {
+                temperature = 0.45f
+                topP = 0.9f
+                maxOutputTokens = 2048
+            },
+            systemInstruction = content { text(deepSystemPromptText) }
         )
     }
 
     private val fastChatModel by lazy {
         Firebase.ai.generativeModel(
             modelName = "gemini-3.5-flash-lite",
-            systemInstruction = content { text(systemPromptText) }
+            generationConfig = generationConfig {
+                temperature = 0.55f
+                topP = 0.9f
+                maxOutputTokens = 1200
+            },
+            systemInstruction = content { text(fastSystemPromptText) }
         )
     }
 
@@ -104,31 +125,45 @@ class AiCopilotRepository {
         history: List<CopilotMessage>,
         activeInnovation: BackendInnovation?,
         attachedImage: Bitmap? = null,
-        useFastModel: Boolean = false
+        useFastModel: Boolean = false,
+        catalogContext: List<BackendInnovation> = emptyList()
     ): Flow<String> = flow {
         val model = if (useFastModel) fastChatModel else chatModel
 
         val recentHistory = history
-            .filter { it.id != "welcome" && it.content.isNotBlank() && !it.content.startsWith("### Connection Issue") }
-            .takeLast(8)
+            .filter {
+                it.id != "welcome" &&
+                    !it.isError &&
+                    it.content.isNotBlank() &&
+                    !it.content.startsWith("### AI Request Error") &&
+                    !it.content.startsWith("### Connection Issue")
+            }
+            .takeLast(12)
             .map { msg ->
                 content(role = if (msg.isAssistant) "model" else "user") {
-                    text(msg.content)
+                    text(msg.content.removeSuffix("\n\n*(Generation stopped)*"))
                 }
             }
 
         val currentPromptText = buildString {
             if (activeInnovation != null) {
-                appendLine("Grounded Innovation Context:")
-                appendLine("Title: ${activeInnovation.title}")
-                appendLine("Category: ${activeInnovation.category} | Stage: ${activeInnovation.stage}")
-                appendLine("Creator: ${activeInnovation.authorName} (${activeInnovation.authorTitle})")
-                appendLine("Funding Target: $${activeInnovation.fundingGoal.toInt()} | Valuation: $${activeInnovation.valuation.toInt()}")
-                appendLine("Description: ${activeInnovation.description}")
+                appendLine("Focused Innovation Context:")
+                appendLine("- Title: ${activeInnovation.title}")
+                appendLine("- Category: ${activeInnovation.category} | Stage: ${activeInnovation.stage}")
+                appendLine("- Creator: ${activeInnovation.authorName} (${activeInnovation.authorTitle})")
+                appendLine("- Funding Goal: $${activeInnovation.fundingGoal.toInt()} | Valuation: $${activeInnovation.valuation.toInt()}")
+                appendLine("- NDA Required: ${activeInnovation.ndaRequired} | Upvotes: ${activeInnovation.likeCount}")
+                appendLine("- Summary: ${activeInnovation.description}")
+                appendLine()
+            } else if (catalogContext.isNotEmpty()) {
+                appendLine("Live IDEA2IMPACT Marketplace Snapshot (use if the user asks for comparisons or recommendations):")
+                catalogContext.take(6).forEach { item ->
+                    appendLine("- ${item.title} [${item.category} · ${item.stage}] — Goal $${item.fundingGoal.toInt()}, Val $${item.valuation.toInt()}")
+                }
                 appendLine()
             }
             if (attachedImage != null) {
-                appendLine("Analyze the attached prototype/diagram image in the context of the request below.")
+                appendLine("Inspect the attached prototype, schematic, or diagram carefully and integrate visual observations directly into your analysis.")
             }
             append("User Request: ")
             append(prompt)
@@ -155,15 +190,15 @@ class AiCopilotRepository {
                 }
             }
             if (accumulated.isBlank()) {
-                throw IllegalStateException("Gemini returned an empty response.")
+                throw IllegalStateException("AI Sana returned an empty response.")
             }
         } catch (e: TimeoutCancellationException) {
-            Log.e(TAG, "AI Copilot streaming timed out", e)
-            throw IllegalStateException("AI request timed out after 60 seconds. Please try again.")
+            Log.e(TAG, "AI Sana streaming timed out", e)
+            throw IllegalStateException("AI Sana timed out after 60 seconds. Please retry.")
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "AI Copilot streaming failed", e)
+            Log.e(TAG, "AI Sana streaming failed", e)
             throw e
         }
     }
@@ -191,7 +226,7 @@ class AiCopilotRepository {
             val response = withTimeout(AI_TIMEOUT_MS) {
                 pitchDeckModel.generateContent(prompt)
             }
-            val jsonText = response.text ?: throw IllegalStateException("Empty structured response from Gemini.")
+            val jsonText = response.text ?: throw IllegalStateException("Empty structured response from AI Sana.")
             val root = JSONObject(jsonText)
             val slidesArray = root.getJSONArray("slides")
             val slides = (0 until slidesArray.length()).map { idx ->
@@ -209,7 +244,7 @@ class AiCopilotRepository {
             }.take(5)
 
             if (slides.isEmpty()) {
-                throw IllegalStateException("Gemini returned 0 pitch deck slides.")
+                throw IllegalStateException("AI Sana returned 0 pitch deck slides.")
             }
             PitchDeckResult(innovationTitle = innovation.title, slides = slides)
         } catch (e: TimeoutCancellationException) {
@@ -250,15 +285,15 @@ class AiCopilotRepository {
                 }
             }
             if (accumulated.isBlank()) {
-                throw IllegalStateException("Gemini returned an empty response.")
+                throw IllegalStateException("AI Sana returned an empty response.")
             }
         } catch (e: TimeoutCancellationException) {
-            Log.e(TAG, "AI Copilot streaming timed out", e)
-            throw IllegalStateException("AI request timed out after 60 seconds. Please try again.")
+            Log.e(TAG, "AI Sana streaming timed out", e)
+            throw IllegalStateException("AI Sana timed out after 60 seconds. Please try again.")
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "AI Copilot streaming failed", e)
+            Log.e(TAG, "AI Sana streaming failed", e)
             throw e
         }
     }
@@ -279,7 +314,7 @@ class AiCopilotRepository {
             val response = withTimeout(AI_TIMEOUT_MS) {
                 onePagerModel.generateContent(prompt)
             }
-            val jsonText = response.text ?: throw IllegalStateException("Empty structured response from Gemini.")
+            val jsonText = response.text ?: throw IllegalStateException("Empty structured response from AI Sana.")
             val json = JSONObject(jsonText)
             val milestonesArr = json.optJSONArray("milestones")
             val milestones = if (milestonesArr != null) {

@@ -67,6 +67,7 @@ import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.EmeraldMint
 import com.example.ui.theme.GoldAmber
 import com.example.ui.theme.PurpleGlow
+import com.example.util.LocalHapticFeedbackManager
 import com.example.util.StartupSoundPlayer
 import kotlinx.coroutines.launch
 import kotlin.math.PI
@@ -117,7 +118,9 @@ fun Prototype3DViewer(
     }
 
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 2.dp),
         shape = RoundedCornerShape(18.dp),
         color = Color(0xFF0A101E),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
@@ -154,13 +157,18 @@ fun Prototype3DViewer(
                     }
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                val haptics = LocalHapticFeedbackManager.current
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     CadIconToggle(
                         active = autoRotate,
                         accent = finish.primary,
                         tag = "cad_auto_rotate",
                         contentDesc = "Toggle auto-rotation",
-                        onClick = { autoRotate = !autoRotate }
+                        onClick = {
+                            val next = !autoRotate
+                            haptics.toggle(next)
+                            autoRotate = next
+                        }
                     ) {
                         Icon(Icons.Filled.RotateRight, contentDescription = null, modifier = Modifier.size(18.dp))
                     }
@@ -169,18 +177,28 @@ fun Prototype3DViewer(
                         accent = finish.primary,
                         tag = "cad_wireframe",
                         contentDesc = "Toggle wireframe",
-                        onClick = { wireframe = !wireframe }
+                        onClick = {
+                            val next = !wireframe
+                            haptics.toggle(next)
+                            wireframe = next
+                        }
                     ) {
                         Icon(Icons.Filled.Layers, contentDescription = null, modifier = Modifier.size(18.dp))
                     }
                     IconButton(
-                        onClick = { zoomScale = (zoomScale + 0.15f).coerceAtMost(1.8f) },
+                        onClick = {
+                            haptics.tap()
+                            zoomScale = (zoomScale + 0.15f).coerceAtMost(1.8f)
+                        },
                         modifier = Modifier.size(40.dp).testTag("cad_zoom_in")
                     ) {
                         Icon(Icons.Filled.ZoomIn, contentDescription = "Zoom in", tint = Color(0xFF8D9AB1), modifier = Modifier.size(18.dp))
                     }
                     IconButton(
-                        onClick = { zoomScale = (zoomScale - 0.15f).coerceAtLeast(0.65f) },
+                        onClick = {
+                            haptics.tap()
+                            zoomScale = (zoomScale - 0.15f).coerceAtLeast(0.65f)
+                        },
                         modifier = Modifier.size(40.dp).testTag("cad_zoom_out")
                     ) {
                         Icon(Icons.Filled.ZoomOut, contentDescription = "Zoom out", tint = Color(0xFF8D9AB1), modifier = Modifier.size(18.dp))
@@ -514,6 +532,7 @@ fun Prototype3DViewer(
                 ) {
                     CadFinish.entries.forEach { item ->
                         val selected = item == finish
+                        val finishHaptics = LocalHapticFeedbackManager.current
                         Box(
                             modifier = Modifier
                                 .size(26.dp)
@@ -524,7 +543,10 @@ fun Prototype3DViewer(
                                     color = if (selected) Color.White else Color.Transparent,
                                     shape = CircleShape
                                 )
-                                .clickable { finish = item }
+                                .clickable {
+                                    finishHaptics.tap()
+                                    finish = item
+                                }
                                 .testTag("cad_finish_${item.name.lowercase()}")
                         )
                     }

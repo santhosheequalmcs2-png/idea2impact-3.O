@@ -52,9 +52,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,11 +74,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
+import com.example.analytics.LocalAnalyticsTracker
 import com.example.ui.components.HeroAmbientLottieBackdrop
 import com.example.ui.theme.CobaltBlue
 import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.PurpleGlow
+import com.example.util.LocalHapticFeedbackManager
 import com.example.util.StartupSoundPlayer
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -99,7 +105,10 @@ fun OnboardingScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val haptics = LocalHapticFeedbackManager.current
+    val analytics = LocalAnalyticsTracker.current
     val scope = rememberCoroutineScope()
+    val stepSlugs = remember { listOf("submit", "match", "assemble", "capital") }
 
     val steps = remember {
         listOf(
@@ -125,7 +134,7 @@ fun OnboardingScreen(
                 badgeIconRes = R.drawable.ic_brand_spark_badge,
                 accentColor = PurpleGlow,
                 secondaryColor = ElectricCyan,
-                highlights = listOf("Gemini Prior-Art Scan", "TAM / SAM / SOM", "98% Fit Scoring")
+                highlights = listOf("AI Sana Prior-Art Scan", "TAM / SAM / SOM", "98% Fit Scoring")
             ),
             OnboardingStepSpec(
                 numberLabel = "03",
@@ -155,11 +164,35 @@ fun OnboardingScreen(
     }
 
     val pagerState = rememberPagerState(pageCount = { steps.size })
+    var lastSettledPage by remember { mutableIntStateOf(-1) }
+    var pendingNavAction by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(pagerState.settledPage) {
+        val current = pagerState.settledPage
+        val slug = stepSlugs.getOrElse(current) { "step_${current + 1}" }
+        analytics.logOnboardingStepViewed(stepNumber = current + 1, stepName = slug)
+        if (lastSettledPage >= 0 && lastSettledPage != current) {
+            if (pendingNavAction == null) {
+                analytics.logOnboardingStepNavigated(
+                    action = "swipe",
+                    fromStep = lastSettledPage + 1,
+                    toStep = current + 1
+                )
+            }
+            pendingNavAction = null
+        }
+        lastSettledPage = current
+    }
 
     BackHandler(enabled = pagerState.currentPage > 0) {
         scope.launch {
+            haptics.tap()
             StartupSoundPlayer.playTap(context)
-            pagerState.animateScrollToPage(pagerState.currentPage - 1)
+            val fromPage = pagerState.currentPage
+            val toPage = fromPage - 1
+            pendingNavAction = "previous"
+            analytics.logOnboardingStepNavigated("previous", fromPage + 1, toPage + 1)
+            pagerState.animateScrollToPage(toPage)
         }
     }
 
@@ -239,7 +272,14 @@ fun OnboardingScreen(
 
                     TextButton(
                         onClick = {
+                            haptics.tap()
                             StartupSoundPlayer.playTap(context)
+                            val page = pagerState.currentPage
+                            analytics.logOnboardingCompleted(
+                                finalStep = page + 1,
+                                stepName = stepSlugs.getOrElse(page) { "step_${page + 1}" },
+                                skipped = true
+                            )
                             onFinishOnboarding()
                         },
                         modifier = Modifier
@@ -291,7 +331,13 @@ fun OnboardingScreen(
                                 .heightIn(min = 48.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .clickable {
+                                    haptics.tap()
                                     StartupSoundPlayer.playTap(context)
+                                    val fromPage = pagerState.currentPage
+                                    if (fromPage != idx) {
+                                        pendingNavAction = "chip"
+                                        analytics.logOnboardingStepNavigated("chip", fromPage + 1, idx + 1)
+                                    }
                                     scope.launch { pagerState.animateScrollToPage(idx) }
                                 }
                                 .testTag("onboarding_step_chip_${idx + 1}")
@@ -352,7 +398,13 @@ fun OnboardingScreen(
                         pagerState = pagerState,
                         steps = steps,
                         onSelectPage = { target ->
+                            haptics.tap()
                             StartupSoundPlayer.playTap(context)
+                            val fromPage = pagerState.currentPage
+                            if (fromPage != target) {
+                                pendingNavAction = "dot"
+                                analytics.logOnboardingStepNavigated("dot", fromPage + 1, target + 1)
+                            }
                             scope.launch { pagerState.animateScrollToPage(target) }
                         }
                     )
@@ -367,9 +419,14 @@ fun OnboardingScreen(
                         if (pagerState.currentPage > 0) {
                             OutlinedButton(
                                 onClick = {
+                                    haptics.tap()
                                     StartupSoundPlayer.playTap(context)
+                                    val fromPage = pagerState.currentPage
+                                    val toPage = fromPage - 1
+                                    pendingNavAction = "previous"
+                                    analytics.logOnboardingStepNavigated("previous", fromPage + 1, toPage + 1)
                                     scope.launch {
-                                        pagerState.animateScrollToPage(pagerState.currentPage - 1)
+                                        pagerState.animateScrollToPage(toPage)
                                     }
                                 },
                                 shape = RoundedCornerShape(14.dp),
@@ -409,13 +466,23 @@ fun OnboardingScreen(
                                     )
                                 )
                                 .clickable {
+                                    val current = pagerState.currentPage
                                     if (isLastPage) {
+                                        haptics.success()
                                         StartupSoundPlayer.playSuccess(context)
+                                        analytics.logOnboardingCompleted(
+                                            finalStep = current + 1,
+                                            stepName = stepSlugs.getOrElse(current) { "step_${current + 1}" },
+                                            skipped = false
+                                        )
                                         onFinishOnboarding()
                                     } else {
+                                        haptics.tap()
                                         StartupSoundPlayer.playTap(context)
+                                        pendingNavAction = "next"
+                                        analytics.logOnboardingStepNavigated("next", current + 1, current + 2)
                                         scope.launch {
-                                            pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                                            pagerState.animateScrollToPage(current + 1)
                                         }
                                     }
                                 }

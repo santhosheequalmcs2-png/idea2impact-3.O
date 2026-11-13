@@ -54,10 +54,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -65,6 +63,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.R
+import com.example.analytics.LocalAnalyticsTracker
 import com.example.data.model.BackendComment
 import com.example.data.model.BackendInnovation
 import com.example.data.model.DigitalNdaRecord
@@ -80,6 +79,7 @@ import com.example.ui.components.sharedInnovationBounds
 import com.example.ui.components.sharedInnovationElement
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.RoseError
+import com.example.util.LocalHapticFeedbackManager
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -104,21 +104,34 @@ fun DetailScreen(
     var showProposalModal by remember { mutableStateOf(false) }
     var showNdaModal by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val haptics = LocalHapticFeedback.current
+    val haptics = LocalHapticFeedbackManager.current
+    val analytics = LocalAnalyticsTracker.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
     Column(modifier = Modifier.fillMaxSize().imePadding()) {
         TopAppBar(
             title = { Text("← Back to Marketplace", style = MaterialTheme.typography.titleMedium) },
             navigationIcon = {
-                IconButton(onClick = onBack, modifier = Modifier.testTag("detail_back_button")) {
+                IconButton(
+                    onClick = {
+                        haptics.tap()
+                        onBack()
+                    },
+                    modifier = Modifier.testTag("detail_back_button")
+                ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to Marketplace")
                 }
             },
             actions = {
                 IconButton(
                     onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptics.tap()
+                        analytics.logInnovationShared(
+                            innovationId = innovation.id,
+                            title = innovation.title,
+                            category = innovation.category,
+                            source = "detail_screen"
+                        )
                         shareInnovationSheet(context, innovation)
                     },
                     modifier = Modifier.testTag("detail_share_button")
@@ -127,7 +140,7 @@ fun DetailScreen(
                 }
                 IconButton(
                     onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptics.heartLike(willBeLiked = !innovation.isLiked)
                         onToggleLike()
                     },
                     modifier = Modifier.testTag("detail_like_button")
@@ -140,7 +153,7 @@ fun DetailScreen(
                 }
                 IconButton(
                     onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        haptics.toggle(!innovation.isBookmarked)
                         onToggleBookmark()
                     },
                     modifier = Modifier.testTag("detail_bookmark_button")
@@ -388,7 +401,10 @@ fun DetailScreen(
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Button(
-                        onClick = { showProposalModal = true },
+                        onClick = {
+                            haptics.tap()
+                            showProposalModal = true
+                        },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp).testTag("detail_proposal_button")
                     ) {
                         Icon(Icons.Filled.Handshake, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -401,7 +417,10 @@ fun DetailScreen(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         OutlinedButton(
-                            onClick = { showNdaModal = true },
+                            onClick = {
+                                haptics.tap()
+                                showNdaModal = true
+                            },
                             modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("detail_nda_button")
                         ) {
                             Icon(Icons.Filled.Shield, contentDescription = null, modifier = Modifier.size(17.dp))
@@ -409,7 +428,10 @@ fun DetailScreen(
                             Text(if (signedNda != null) "NDA Signed" else "Sign Digital NDA")
                         }
                         OutlinedButton(
-                            onClick = onGeneratePitchDeck,
+                            onClick = {
+                                haptics.tap()
+                                onGeneratePitchDeck()
+                            },
                             modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("detail_pitch_deck_button")
                         ) {
                             Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(17.dp))
@@ -419,12 +441,19 @@ fun DetailScreen(
                     }
 
                     OutlinedButton(
-                        onClick = onAnalyzeWithCopilot,
+                        onClick = {
+                            haptics.tap()
+                            analytics.logCopilotOpenedFromDetail(
+                                innovationId = innovation.id,
+                                category = innovation.category
+                            )
+                            onAnalyzeWithCopilot()
+                        },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("detail_ask_copilot_button")
                     ) {
                         Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Analyze with Gemini 3.8 Copilot")
+                        Text("Analyze with AI Sana")
                     }
                 }
             }
@@ -445,7 +474,7 @@ fun DetailScreen(
 
                     Button(
                         onClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            haptics.success()
                             onPostComment(commentText) {
                                 commentText = ""
                                 keyboardController?.hide()
