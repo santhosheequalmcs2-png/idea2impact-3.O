@@ -1,0 +1,213 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private user account and innovator profile.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the user." },
+        "name": { "type": "string", "description": "Display name." },
+        "email": { "type": "string", "description": "User email address (private to owner)." },
+        "role": {
+          "type": "string",
+          "enum": ["Creator", "Builder", "Investor", "Patent Professional", "Company", "Customer / Buyer"]
+        },
+        "headline": { "type": "string" },
+        "bio": { "type": "string" },
+        "skills": { "type": "array", "description": "List of skill tags (max 20)." },
+        "location": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp." }
+      },
+      "required": ["userId", "name", "role", "createdAt", "updatedAt"]
+    },
+    "SavedItem": {
+      "title": "SavedItem",
+      "description": "Bookmarked innovation reference stored under a user's saved subcollection.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "innovationId": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "price": { "type": "number" },
+        "authorName": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "innovationId", "title", "category", "createdAt"]
+    },
+    "LikedItem": {
+      "title": "LikedItem",
+      "description": "Tracks innovations liked by a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "innovationId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "innovationId", "createdAt"]
+    },
+    "SignedNda": {
+      "title": "SignedNda",
+      "description": "Digital Mutual NDA signature record for confidential deal room access.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "innovationId": { "type": "string" },
+        "innovationTitle": { "type": "string" },
+        "signerName": { "type": "string" },
+        "signerOrg": { "type": "string" },
+        "signatureId": { "type": "string" },
+        "signedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "innovationId", "innovationTitle", "signerName", "signatureId", "signedAt"]
+    },
+    "Pledge": {
+      "title": "Pledge",
+      "description": "Micro-backing support pledge record.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "innovationId": { "type": "string" },
+        "innovationTitle": { "type": "string" },
+        "supporterName": { "type": "string" },
+        "amount": { "type": "number" },
+        "message": { "type": "string" },
+        "receiptId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "innovationId", "innovationTitle", "supporterName", "amount", "receiptId", "createdAt"]
+    },
+    "Innovation": {
+      "title": "Innovation",
+      "description": "Marketplace innovation listing.",
+      "type": "object",
+      "properties": {
+        "creatorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorHeadline": { "type": "string" },
+        "authorAvatar": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "price": { "type": "number" },
+        "visibility": { "type": "string", "enum": ["PUBLIC", "PRIVATE"] },
+        "licensing": { "type": "boolean" },
+        "funding": { "type": "boolean" },
+        "ownershipConfirmed": { "type": "boolean" },
+        "imageUrl": { "type": "string" },
+        "likeCount": { "type": "integer" },
+        "commentCount": { "type": "integer" },
+        "stageIndex": { "type": "integer" },
+        "isShowcaseSeed": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "creatorId", "authorName", "title", "description", "category",
+        "price", "visibility", "licensing", "funding", "ownershipConfirmed",
+        "likeCount", "commentCount", "stageIndex", "isShowcaseSeed", "createdAt", "updatedAt"
+      ]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "Discussion comment on an innovation.",
+      "type": "object",
+      "properties": {
+        "innovationId": { "type": "string" },
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorAvatar": { "type": "string" },
+        "body": { "type": "string" },
+        "visibility": { "type": "string", "enum": ["PUBLIC", "PRIVATE"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["innovationId", "authorId", "authorName", "body", "visibility", "createdAt"]
+    },
+    "Talent": {
+      "title": "Talent",
+      "description": "Publicly discoverable innovator/builder/investor/patent pro directory entry (no PII).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "headline": { "type": "string" },
+        "bio": { "type": "string" },
+        "skills": { "type": "array" },
+        "location": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "projectsCount": { "type": "integer" },
+        "isPublic": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "role", "headline", "bio", "skills", "location", "projectsCount", "isPublic", "createdAt", "updatedAt"]
+    },
+    "Proposal": {
+      "title": "Proposal",
+      "description": "Collaboration, investment, or licensing offer between users.",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderHeadline": { "type": "string" },
+        "senderLocation": { "type": "string" },
+        "recipientId": { "type": "string" },
+        "innovationId": { "type": "string" },
+        "innovationTitle": { "type": "string" },
+        "proposalType": {
+          "type": "string",
+          "enum": ["Investment", "Licensing", "Co-founder", "Acquisition", "Collaboration"]
+        },
+        "amount": { "type": "string" },
+        "message": { "type": "string" },
+        "contactInfo": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "ACCEPTED", "DECLINED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderId", "senderName", "recipientId", "innovationId", "innovationTitle", "proposalType", "message", "status", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private user account and profile settings."
+    },
+    "/users/{userId}/saved/{innovationId}": {
+      "schema": { "$ref": "#/entities/SavedItem" },
+      "description": "User's bookmarked innovations."
+    },
+    "/users/{userId}/liked/{innovationId}": {
+      "schema": { "$ref": "#/entities/LikedItem" },
+      "description": "User's liked innovation markers."
+    },
+    "/users/{userId}/signedNdas/{innovationId}": {
+      "schema": { "$ref": "#/entities/SignedNda" },
+      "description": "Mutual NDA digital signature records."
+    },
+    "/users/{userId}/pledges/{pledgeId}": {
+      "schema": { "$ref": "#/entities/Pledge" },
+      "description": "User's micro-backing pledges."
+    },
+    "/innovations/{innovationId}": {
+      "schema": { "$ref": "#/entities/Innovation" },
+      "description": "Marketplace innovation listings."
+    },
+    "/innovations/{innovationId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/Comment" },
+      "description": "Discussion comments on an innovation."
+    },
+    "/talents/{talentId}": {
+      "schema": { "$ref": "#/entities/Talent" },
+      "description": "Public talent and specialist directory profiles."
+    },
+    "/proposals/{proposalId}": {
+      "schema": { "$ref": "#/entities/Proposal" },
+      "description": "Partnership, licensing, and investment offers."
+    }
+  }
+}

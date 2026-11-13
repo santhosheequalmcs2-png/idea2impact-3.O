@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="420dp"
+    android:height="240dp"
+    android:viewportWidth="420"
+    android:viewportHeight="240">
+
+    <!-- Subtle Hexagonal Telemetry Grid Lines -->
+    <path
+        android:pathData="M24,42 L110,18 L210,48 L315,16 L396,52 M36,122 L126,96 L210,136 L296,98 L384,128 M52,198 L142,172 L210,206 L284,174 L368,200"
+        android:strokeWidth="1"
+        android:strokeAlpha="0.16"
+        android:strokeColor="#6366F1" />
+
+    <!-- Vertical & Diagonal Constellation Links -->
+    <path
+        android:pathData="M110,18 L126,96 L142,172 M210,48 L210,136 L210,206 M315,16 L296,98 L284,174 M110,18 L210,136 L315,16 M126,96 L284,174 M296,98 L142,172"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.22"
+        android:strokeColor="#3B82F6" />
+
+    <!-- Outer Dashed Global Capital Meridian Arc -->
+    <path
+        android:pathData="M34,120 A176,84 0 1,1 386,120 A176,84 0 1,1 34,120"
+        android:strokeWidth="1.5"
+        android:strokeAlpha="0.28">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:endX="386"
+                android:endY="120"
+                android:startX="34"
+                android:startY="120"
+                android:type="linear">
+                <item android:color="#7C3AED" android:offset="0" />
+                <item android:color="#2563EB" android:offset="0.5" />
+                <item android:color="#06B6D4" android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Tilted Elliptical Innovation Corridor Arc -->
+    <path
+        android:pathData="M56,164 C118,54 302,38 368,94 C394,116 364,178 278,198 C184,220 82,196 56,164 Z"
+        android:strokeWidth="2">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:endX="372"
+                android:endY="94"
+                android:startX="56"
+                android:startY="164"
+                android:type="linear">
+                <item android:color="#8B5CF6" android:offset="0" />
+                <item android:color="#06B6D4" android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- Counter Cross-Hemisphere Trade Trajectory -->
+    <path
+        android:pathData="M48,74 C132,162 288,166 374,78"
+        android:strokeWidth="1.8"
+        android:strokeAlpha="0.45"
+        android:strokeColor="#0EA5E9" />
+
+    <!-- Inner Geodesic Core Silhouette Halo -->
+    <path
+        android:pathData="M210,58 L264,89 L264,151 L210,182 L156,151 L156,89 Z"
+        android:fillAlpha="0.06"
+        android:fillColor="#6366F1"
+        android:strokeWidth="1.4"
+        android:strokeAlpha="0.34"
+        android:strokeColor="#7C3AED" />
+
+    <!-- Global Hub Nodes: Outer Halos -->
+    <path android:fillAlpha="0.22" android:fillColor="#7C3AED" android:pathData="M110,18 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+    <path android:fillAlpha="0.22" android:fillColor="#06B6D4" android:pathData="M315,16 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+    <path android:fillAlpha="0.22" android:fillColor="#2563EB" android:pathData="M126,96 m-10,0 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0" />
+    <path android:fillAlpha="0.22" android:fillColor="#10B981" android:pathData="M296,98 m-10,0 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0" />
+    <path android:fillAlpha="0.22" android:fillColor="#06B6D4" android:pathData="M142,172 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0" />
+    <path android:fillAlpha="0.22" android:fillColor="#7C3AED" android:pathData="M284,174 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0" />
+    <path android:fillAlpha="0.25" android:fillColor="#3B82F6" android:pathData="M368,94 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+    <path android:fillAlpha="0.25" android:fillColor="#8B5CF6" android:pathData="M56,164 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+
+    <!-- Global Hub Nodes: Crisp Core Dots -->
+    <path android:fillColor="#7C3AED" android:pathData="M110,18 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+    <path android:fillColor="#06B6D4" android:pathData="M315,16 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+    <path android:fillColor="#2563EB" android:pathData="M126,96 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path android:fillColor="#10B981" android:pathData="M296,98 m-4.5,0 a4.5,4.5 0 1,0 9,0 a4.5,4.5 0 1,0 -9,0" />
+    <path android:fillColor="#06B6D4" android:pathData="M142,172 m-3.5,0 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0" />
+    <path android:fillColor="#7C3AED" android:pathData="M284,174 m-3.5,0 a3.5,3.5 0 1,0 7,0 a3.5,3.5 0 1,0 -7,0" />
+    <path android:fillColor="#3B82F6" android:pathData="M368,94 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+    <path android:fillColor="#8B5CF6" android:pathData="M56,164 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+
+    <!-- Subtle Spark Accents -->
+    <path
+        android:fillColor="#7C3AED"
+        android:fillAlpha="0.65"
+        android:pathData="M210,20 L212.5,27.5 L220,30 L212.5,32.5 L210,40 L207.5,32.5 L200,30 L207.5,27.5 Z" />
+    <path
+        android:fillColor="#06B6D4"
+        android:fillAlpha="0.65"
+        android:pathData="M376,166 L378,171 L383,173 L378,175 L376,180 L374,175 L369,173 L374,171 Z" />
+</vector>

@@ -1,0 +1,334 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Primitive Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isBoundedString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isValidStringList(listVal, maxItems) {
+      return listVal is list && listVal.size() <= maxItems &&
+             (listVal.size() == 0 || (listVal[0] is string && listVal[0].size() <= 64));
+    }
+
+    // --- Entity Validators ---
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['userId', 'name', 'role', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'name', 'email', 'role', 'headline', 'bio', 'skills', 'location', 'avatarUrl', 'createdAt', 'updatedAt']) &&
+             isValidId(data.userId) &&
+             isBoundedString(data.name, 1, 100) &&
+             data.role in ['Creator', 'Builder', 'Investor', 'Patent Professional', 'Company', 'Customer / Buyer'] &&
+             (!('email' in data) || data.email == null || isBoundedString(data.email, 0, 160)) &&
+             (!('headline' in data) || data.headline == null || isBoundedString(data.headline, 0, 200)) &&
+             (!('bio' in data) || data.bio == null || isBoundedString(data.bio, 0, 2000)) &&
+             (!('skills' in data) || isValidStringList(data.skills, 25)) &&
+             (!('location' in data) || data.location == null || isBoundedString(data.location, 0, 120)) &&
+             (!('avatarUrl' in data) || data.avatarUrl == null || isBoundedString(data.avatarUrl, 0, 1000)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidSavedItem(data) {
+      return data.keys().hasAll(['userId', 'innovationId', 'title', 'category', 'createdAt']) &&
+             data.keys().hasOnly(['userId', 'innovationId', 'title', 'category', 'price', 'authorName', 'imageUrl', 'createdAt']) &&
+             isValidId(data.userId) &&
+             isValidId(data.innovationId) &&
+             isBoundedString(data.title, 1, 160) &&
+             isBoundedString(data.category, 1, 80) &&
+             (!('price' in data) || (data.price is number && data.price >= 0)) &&
+             (!('authorName' in data) || isBoundedString(data.authorName, 0, 120)) &&
+             (!('imageUrl' in data) || data.imageUrl == null || isBoundedString(data.imageUrl, 0, 1000)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidLikedItem(data) {
+      return data.keys().hasAll(['userId', 'innovationId', 'createdAt']) &&
+             data.keys().hasOnly(['userId', 'innovationId', 'createdAt']) &&
+             isValidId(data.userId) &&
+             isValidId(data.innovationId) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidSignedNda(data) {
+      return data.keys().hasAll(['userId', 'innovationId', 'innovationTitle', 'signerName', 'signatureId', 'signedAt']) &&
+             data.keys().hasOnly(['userId', 'innovationId', 'innovationTitle', 'signerName', 'signerOrg', 'signatureId', 'signedAt']) &&
+             isValidId(data.userId) &&
+             isValidId(data.innovationId) &&
+             isBoundedString(data.innovationTitle, 1, 160) &&
+             isBoundedString(data.signerName, 1, 120) &&
+             (!('signerOrg' in data) || data.signerOrg == null || isBoundedString(data.signerOrg, 0, 160)) &&
+             isBoundedString(data.signatureId, 4, 80) &&
+             data.signedAt is timestamp && data.signedAt <= request.time;
+    }
+
+    function isValidPledge(data) {
+      return data.keys().hasAll(['userId', 'innovationId', 'innovationTitle', 'supporterName', 'amount', 'receiptId', 'createdAt']) &&
+             data.keys().hasOnly(['userId', 'innovationId', 'innovationTitle', 'supporterName', 'amount', 'message', 'receiptId', 'createdAt']) &&
+             isValidId(data.userId) &&
+             isValidId(data.innovationId) &&
+             isBoundedString(data.innovationTitle, 1, 160) &&
+             isBoundedString(data.supporterName, 1, 120) &&
+             data.amount is number && data.amount > 0 && data.amount <= 100000 &&
+             (!('message' in data) || data.message == null || isBoundedString(data.message, 0, 500)) &&
+             isBoundedString(data.receiptId, 4, 80) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidInnovation(data) {
+      return data.keys().hasAll([
+               'creatorId', 'authorName', 'title', 'description', 'category',
+               'price', 'visibility', 'licensing', 'funding', 'ownershipConfirmed',
+               'likeCount', 'commentCount', 'stageIndex', 'isShowcaseSeed', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'creatorId', 'authorName', 'authorHeadline', 'authorAvatar',
+               'title', 'description', 'category', 'price', 'visibility',
+               'licensing', 'funding', 'ownershipConfirmed', 'imageUrl',
+               'likeCount', 'commentCount', 'stageIndex', 'isShowcaseSeed', 'createdAt', 'updatedAt'
+             ]) &&
+             isValidId(data.creatorId) &&
+             isBoundedString(data.authorName, 1, 120) &&
+             (!('authorHeadline' in data) || data.authorHeadline == null || isBoundedString(data.authorHeadline, 0, 200)) &&
+             (!('authorAvatar' in data) || data.authorAvatar == null || isBoundedString(data.authorAvatar, 0, 1000)) &&
+             isBoundedString(data.title, 3, 140) &&
+             isBoundedString(data.description, 10, 10000) &&
+             isBoundedString(data.category, 2, 60) &&
+             data.price is number && data.price >= 0 && data.price <= 100000000 &&
+             data.visibility in ['PUBLIC', 'PRIVATE'] &&
+             data.licensing is bool &&
+             data.funding is bool &&
+             data.ownershipConfirmed is bool &&
+             (!('imageUrl' in data) || data.imageUrl == null || isBoundedString(data.imageUrl, 0, 1000)) &&
+             data.likeCount is int && data.likeCount >= 0 &&
+             data.commentCount is int && data.commentCount >= 0 &&
+             data.stageIndex is int && data.stageIndex >= 0 && data.stageIndex <= 3 &&
+             data.isShowcaseSeed is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidComment(data) {
+      return data.keys().hasAll(['innovationId', 'authorId', 'authorName', 'body', 'visibility', 'createdAt']) &&
+             data.keys().hasOnly(['innovationId', 'authorId', 'authorName', 'authorAvatar', 'body', 'visibility', 'createdAt']) &&
+             isValidId(data.innovationId) &&
+             isValidId(data.authorId) &&
+             isBoundedString(data.authorName, 1, 120) &&
+             (!('authorAvatar' in data) || data.authorAvatar == null || isBoundedString(data.authorAvatar, 0, 1000)) &&
+             isBoundedString(data.body, 1, 2000) &&
+             data.visibility in ['PUBLIC', 'PRIVATE'] &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidTalent(data) {
+      return data.keys().hasAll(['userId', 'name', 'role', 'headline', 'bio', 'skills', 'location', 'projectsCount', 'isPublic', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'name', 'role', 'headline', 'bio', 'skills', 'location', 'avatarUrl', 'projectsCount', 'isPublic', 'createdAt', 'updatedAt']) &&
+             isValidId(data.userId) &&
+             isBoundedString(data.name, 1, 120) &&
+             data.role in ['Creator', 'Builder', 'Investor', 'Patent Professional', 'Company', 'Customer / Buyer'] &&
+             isBoundedString(data.headline, 0, 200) &&
+             isBoundedString(data.bio, 0, 2000) &&
+             isValidStringList(data.skills, 25) &&
+             isBoundedString(data.location, 0, 120) &&
+             (!('avatarUrl' in data) || data.avatarUrl == null || isBoundedString(data.avatarUrl, 0, 1000)) &&
+             data.projectsCount is int && data.projectsCount >= 0 && data.projectsCount <= 1000 &&
+             data.isPublic is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidProposal(data) {
+      return data.keys().hasAll(['senderId', 'senderName', 'recipientId', 'innovationId', 'innovationTitle', 'proposalType', 'message', 'status', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly(['senderId', 'senderName', 'senderHeadline', 'senderLocation', 'recipientId', 'innovationId', 'innovationTitle', 'proposalType', 'amount', 'message', 'contactInfo', 'status', 'createdAt', 'updatedAt']) &&
+             isValidId(data.senderId) &&
+             isBoundedString(data.senderName, 1, 120) &&
+             (!('senderHeadline' in data) || data.senderHeadline == null || isBoundedString(data.senderHeadline, 0, 200)) &&
+             (!('senderLocation' in data) || data.senderLocation == null || isBoundedString(data.senderLocation, 0, 120)) &&
+             isValidId(data.recipientId) &&
+             isValidId(data.innovationId) &&
+             isBoundedString(data.innovationTitle, 1, 160) &&
+             data.proposalType in ['Investment', 'Licensing', 'Co-founder', 'Acquisition', 'Collaboration'] &&
+             (!('amount' in data) || data.amount == null || isBoundedString(data.amount, 0, 120)) &&
+             isBoundedString(data.message, 5, 2500) &&
+             (!('contactInfo' in data) || data.contactInfo == null || isBoundedString(data.contactInfo, 0, 200)) &&
+             data.status in ['PENDING', 'ACCEPTED', 'DECLINED'] &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // --- Collection Rules ---
+
+    // 1. User Private Account & Subcollections
+    match /users/{userId} {
+      allow get, list: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && isValidId(userId) && request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       isValidUserProfile(incoming());
+      allow update: if isSignedIn() && isValidId(userId) && request.auth.uid == userId &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['name', 'email', 'role', 'headline', 'bio', 'skills', 'location', 'avatarUrl', 'updatedAt']);
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+
+      match /saved/{innovationId} {
+        allow get, list: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn() && isValidId(userId) && isValidId(innovationId) && request.auth.uid == userId &&
+                         isValidSavedItem(incoming()) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().innovationId == innovationId;
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(innovationId) && request.auth.uid == userId;
+      }
+
+      match /liked/{innovationId} {
+        allow get, list: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn() && isValidId(userId) && isValidId(innovationId) && request.auth.uid == userId &&
+                         isValidLikedItem(incoming()) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().innovationId == innovationId;
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(innovationId) && request.auth.uid == userId;
+      }
+
+      match /signedNdas/{innovationId} {
+        allow get, list: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn() && isValidId(userId) && isValidId(innovationId) && request.auth.uid == userId &&
+                         isValidSignedNda(incoming()) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().innovationId == innovationId;
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(innovationId) && request.auth.uid == userId;
+      }
+
+      match /pledges/{pledgeId} {
+        allow get, list: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn() && isValidId(userId) && isValidId(pledgeId) && request.auth.uid == userId &&
+                         isValidPledge(incoming()) &&
+                         incoming().userId == request.auth.uid;
+        allow update, delete: if false;
+      }
+    }
+
+    // 2. Innovations & Comments
+    match /innovations/{innovationId} {
+      allow get: if isSignedIn() && isValidId(innovationId) &&
+                    resource != null &&
+                    (existing().visibility == 'PUBLIC' || existing().creatorId == request.auth.uid);
+      allow list: if isSignedIn() &&
+                     (existing().visibility == 'PUBLIC' || existing().creatorId == request.auth.uid);
+      allow create: if isSignedIn() && isValidId(innovationId) &&
+                       isValidInnovation(incoming()) &&
+                       incoming().creatorId == request.auth.uid &&
+                       ((incoming().isShowcaseSeed == false && incoming().likeCount == 0 && incoming().commentCount == 0) ||
+                        (incoming().isShowcaseSeed == true && incoming().likeCount <= 500 && incoming().commentCount <= 100));
+      allow update: if isSignedIn() && isValidId(innovationId) &&
+                       isValidInnovation(incoming()) &&
+                       incoming().creatorId == existing().creatorId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().isShowcaseSeed == existing().isShowcaseSeed && (
+                         (existing().creatorId == request.auth.uid &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'title', 'description', 'category', 'price', 'visibility',
+                            'licensing', 'funding', 'imageUrl', 'stageIndex',
+                            'authorName', 'authorHeadline', 'authorAvatar', 'updatedAt'
+                          ])) ||
+                         (existing().visibility == 'PUBLIC' &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['likeCount', 'updatedAt']) &&
+                          (incoming().likeCount == existing().likeCount + 1 ||
+                           (existing().likeCount > 0 && incoming().likeCount == existing().likeCount - 1))) ||
+                         (existing().visibility == 'PUBLIC' &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['commentCount', 'updatedAt']) &&
+                          (incoming().commentCount == existing().commentCount + 1 ||
+                           (existing().commentCount > 0 && incoming().commentCount == existing().commentCount - 1)))
+                       );
+      allow delete: if isSignedIn() && isValidId(innovationId) && existing().creatorId == request.auth.uid;
+
+      match /comments/{commentId} {
+        allow get: if isSignedIn() && isValidId(innovationId) && isValidId(commentId) &&
+                      resource != null &&
+                      (existing().visibility == 'PUBLIC' || existing().authorId == request.auth.uid);
+        allow list: if isSignedIn() &&
+                       (existing().visibility == 'PUBLIC' || existing().authorId == request.auth.uid);
+        allow create: if isSignedIn() && isValidId(innovationId) && isValidId(commentId) &&
+                         isValidComment(incoming()) &&
+                         incoming().authorId == request.auth.uid &&
+                         incoming().innovationId == innovationId &&
+                         exists(/databases/$(database)/documents/innovations/$(innovationId));
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(innovationId) && isValidId(commentId) &&
+                         (existing().authorId == request.auth.uid ||
+                          get(/databases/$(database)/documents/innovations/$(innovationId)).data.creatorId == request.auth.uid);
+      }
+    }
+
+    // 3. Talent & Specialist Directory
+    match /talents/{talentId} {
+      allow get: if isSignedIn() && isValidId(talentId) &&
+                    ((resource == null && talentId == request.auth.uid) ||
+                     (resource != null && (existing().isPublic == true || existing().userId == request.auth.uid)));
+      allow list: if isSignedIn() &&
+                     (existing().isPublic == true || existing().userId == request.auth.uid);
+      allow create: if isSignedIn() && isValidId(talentId) &&
+                       isValidTalent(incoming()) &&
+                       incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && isValidId(talentId) &&
+                       isValidTalent(incoming()) &&
+                       existing().userId == request.auth.uid &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'name', 'role', 'headline', 'bio', 'skills', 'location',
+                         'avatarUrl', 'projectsCount', 'isPublic', 'updatedAt'
+                       ]);
+      allow delete: if isSignedIn() && isValidId(talentId) && existing().userId == request.auth.uid;
+    }
+
+    // 4. Partnership & Investment Proposals
+    match /proposals/{proposalId} {
+      allow get: if isSignedIn() && isValidId(proposalId) &&
+                    resource != null &&
+                    (existing().recipientId == request.auth.uid || existing().senderId == request.auth.uid);
+      allow list: if isSignedIn() &&
+                     (existing().recipientId == request.auth.uid || existing().senderId == request.auth.uid);
+      allow create: if isSignedIn() && isValidId(proposalId) &&
+                       isValidProposal(incoming()) &&
+                       incoming().senderId == request.auth.uid &&
+                       incoming().status == 'PENDING' &&
+                       exists(/databases/$(database)/documents/innovations/$(incoming().innovationId));
+      allow update: if isSignedIn() && isValidId(proposalId) &&
+                       isValidProposal(incoming()) &&
+                       existing().status == 'PENDING' &&
+                       existing().recipientId == request.auth.uid &&
+                       incoming().senderId == existing().senderId &&
+                       incoming().recipientId == existing().recipientId &&
+                       incoming().innovationId == existing().innovationId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().status in ['ACCEPTED', 'DECLINED'] &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+      allow delete: if isSignedIn() && isValidId(proposalId) &&
+                       (existing().senderId == request.auth.uid || existing().recipientId == request.auth.uid);
+    }
+  }
+}

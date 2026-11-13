@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="420dp"
+    android:height="156dp"
+    android:viewportWidth="420"
+    android:viewportHeight="156">
+
+    <!-- Soft Atmospheric Glow Rings -->
+    <path
+        android:fillAlpha="0.09"
+        android:fillColor="#7C3AED"
+        android:pathData="M210,78 m-68,0 a68,68 0 1,0 136,0 a68,68 0 1,0 -136,0" />
+    <path
+        android:fillAlpha="0.07"
+        android:fillColor="#0EA5E9"
+        android:pathData="M78,84 m-42,0 a42,42 0 1,0 84,0 a42,42 0 1,0 -84,0" />
+    <path
+        android:fillAlpha="0.07"
+        android:fillColor="#10B981"
+        android:pathData="M344,74 m-42,0 a42,42 0 1,0 84,0 a42,42 0 1,0 -84,0" />
+
+    <!-- Subtle Coordinate Telemetry Grid -->
+    <path
+        android:pathData="M20,30 H400 M20,78 H400 M20,126 H400 M95,12 V144 M210,12 V144 M325,12 V144"
+        android:strokeWidth="0.7"
+        android:strokeAlpha="0.14"
+        android:strokeColor="#6366F1" />
+
+    <!-- Global Capital & Innovation Exchange Arcs -->
+    <path
+        android:pathData="M42,108 C98,28 322,22 380,98"
+        android:strokeWidth="2.2"
+        android:strokeAlpha="0.65"
+        android:strokeColor="#7C3AED"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M48,54 C124,132 294,134 374,48"
+        android:strokeWidth="2.0"
+        android:strokeAlpha="0.55"
+        android:strokeColor="#06B6D4"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M78,84 L152,44 L210,78 L268,42 L344,74 L274,116 L210,78 L144,116 Z"
+        android:strokeWidth="1.4"
+        android:strokeAlpha="0.38"
+        android:strokeColor="#3B82F6" />
+
+    <!-- Central Geodesic Exchange Node -->
+    <path
+        android:fillAlpha="0.14"
+        android:fillColor="#2563EB"
+        android:pathData="M210,36 L246,57 L246,99 L210,120 L174,99 L174,57 Z"
+        android:strokeWidth="1.8"
+        android:strokeColor="#6366F1" />
+    <path
+        android:pathData="M210,36 L210,120 M174,57 L246,99 M246,57 L174,99"
+        android:strokeWidth="1.2"
+        android:strokeAlpha="0.65"
+        android:strokeColor="#0EA5E9" />
+    <path
+        android:fillColor="#0E7490"
+        android:pathData="M210,78 m-17,0 a17,17 0 1,0 34,0 a17,17 0 1,0 -34,0" />
+    <path
+        android:fillColor="#38BDF8"
+        android:fillAlpha="0.45"
+        android:pathData="M204,72 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0" />
+    <path
+        android:pathData="M180,92 C194,62 226,56 242,68"
+        android:strokeWidth="2.2"
+        android:strokeColor="#22D3EE"
+        android:strokeLineCap="round" />
+
+    <!-- Left Node Card Graphic: Creator Idea Bulb -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.92"
+        android:pathData="M56,64 h44 a10,10 0 0 1 10,10 v20 a10,10 0 0 1 -10,10 h-44 a10,10 0 0 1 -10,-10 v-20 a10,10 0 0 1 10,-10 z"
+        android:strokeWidth="1.4"
+        android:strokeColor="#8B5CF6" />
+    <path
+        android:fillColor="#7C3AED"
+        android:pathData="M78,74 m-7,0 a7,7 0 1,0 14,0 a7,7 0 1,0 -14,0" />
+    <path
+        android:fillColor="#475569"
+        android:pathData="M73.5,83 h9 v3 h-9 z" />
+    <path
+        android:pathData="M78,89 V94"
+        android:strokeWidth="1.8"
+        android:strokeColor="#7C3AED"
+        android:strokeLineCap="round" />
+
+    <!-- Right Node Card Graphic: Capital & Patent Shield -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillAlpha="0.92"
+        android:pathData="M322,54 h44 a10,10 0 0 1 10,10 v20 a10,10 0 0 1 -10,10 h-44 a10,10 0 0 1 -10,-10 v-20 a10,10 0 0 1 10,-10 z"
+        android:strokeWidth="1.4"
+        android:strokeColor="#0EA5E9" />
+    <path
+        android:fillAlpha="0.18"
+        android:fillColor="#10B981"
+        android:pathData="M344,62 L354,66 V73 C354,79 350,84 344,86 C338,84 334,79 334,73 V66 Z"
+        android:strokeWidth="1.6"
+        android:strokeColor="#10B981" />
+    <path
+        android:pathData="M340,74 L343,77 L349,70"
+        android:strokeWidth="1.8"
+        android:strokeColor="#10B981"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- Secondary Network Node Hubs -->
+    <path android:fillColor="#7C3AED" android:pathData="M152,44 m-5.5,0 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0" />
+    <path android:fillColor="#06B6D4" android:pathData="M268,42 m-5.5,0 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0" />
+    <path android:fillColor="#3B82F6" android:pathData="M144,116 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+    <path android:fillColor="#10B981" android:pathData="M274,116 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0" />
+
+    <!-- Brand 4-Point AI Spark Accents -->
+    <path
+        android:fillColor="#7C3AED"
+        android:pathData="M210,12 L212,18 L218,20 L212,22 L210,28 L208,22 L202,20 L208,18 Z" />
+    <path
+        android:fillColor="#06B6D4"
+        android:pathData="M306,120 L307.6,124.4 L312,126 L307.6,127.6 L306,132 L304.4,127.6 L300,126 L304.4,124.4 Z" />
+</vector>
