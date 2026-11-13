@@ -1,0 +1,8 @@
+{
+  "name": "IDEA2IMPACT",
+  "description": "AI-powered global innovation marketplace connecting inventors, elite builders, patent attorneys, and angel investors.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
