@@ -9,6 +9,7 @@ import com.example.data.model.InnovationComment
 import com.example.data.model.Pledge
 import com.example.data.model.Proposal
 import com.example.data.model.SavedItem
+import com.example.data.model.ShareIdeaScope
 import com.example.data.model.SignedNda
 import com.example.data.model.TalentProfile
 import com.example.data.model.UserProfile
@@ -112,6 +113,18 @@ class IdeaRepository(
                 }.sortedByDescending { it.projectsCount }
             }
             .handleStreamError(OperationType.LIST, path)
+    }
+
+    fun observeMyTalentProfile(userId: String): Flow<TalentProfile?> {
+        val path = "talents/$userId"
+        return db.collection("talents").document(userId)
+            .snapshots()
+            .map { snapshot ->
+                if (snapshot.exists()) {
+                    snapshot.toObject(TalentProfile::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                } else null
+            }
+            .handleStreamError(OperationType.GET, path, userId)
     }
 
     fun observeUserProfile(userId: String): Flow<UserProfile?> {
@@ -583,12 +596,59 @@ class IdeaRepository(
             senderHeadline = senderProfile?.headline,
             senderLocation = senderProfile?.location,
             recipientId = innovation.creatorId,
+            recipientName = innovation.authorName,
             innovationId = innovation.id,
             innovationTitle = innovation.title,
             proposalType = proposalType,
             amount = amount?.trim()?.takeIf { it.isNotBlank() },
             message = message.trim(),
             contactInfo = contactInfo?.trim()?.takeIf { it.isNotBlank() },
+            status = "PENDING"
+        )
+        try {
+            proposalRef.set(proposal.toCreateMap()).await()
+            return proposalRef.id
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, proposalRef.path, auth)
+            throw e
+        }
+    }
+
+    suspend fun submitCollaborationProposal(
+        recipientId: String,
+        recipientName: String,
+        innovationId: String?,
+        innovationTitle: String,
+        proposalType: String,
+        amount: String?,
+        message: String,
+        contactInfo: String?,
+        sharedIdeaScope: ShareIdeaScope,
+        sharedIdeaSummary: String?,
+        senderProfile: UserProfile?
+    ): String {
+        val uid = requireUserId()
+        val resolvedInnovationId = innovationId?.trim()?.takeIf { it.isNotBlank() } ?: "none"
+        val resolvedTitle = innovationTitle.trim().ifBlank { "Direct Collaboration" }
+        val proposalRef = db.collection("proposals").document()
+        val proposal = Proposal(
+            senderId = uid,
+            senderName = senderProfile?.name?.ifBlank { "Innovator" }
+                ?: auth.currentUser?.displayName ?: "Innovator",
+            senderHeadline = senderProfile?.headline,
+            senderLocation = senderProfile?.location,
+            recipientId = recipientId,
+            recipientName = recipientName.trim().takeIf { it.isNotBlank() },
+            innovationId = resolvedInnovationId,
+            innovationTitle = resolvedTitle,
+            proposalType = proposalType,
+            amount = amount?.trim()?.takeIf { it.isNotBlank() },
+            message = message.trim(),
+            contactInfo = contactInfo?.trim()?.takeIf { it.isNotBlank() },
+            sharedIdeaScope = sharedIdeaScope.name,
+            sharedIdeaSummary = sharedIdeaSummary?.trim()?.takeIf { it.isNotBlank() },
             status = "PENDING"
         )
         try {
@@ -630,7 +690,8 @@ class IdeaRepository(
         bio: String,
         skills: List<String>,
         location: String,
-        existingProjectsCount: Long
+        existingProjectsCount: Long,
+        isPublic: Boolean = true
     ) {
         val uid = requireUserId()
         val userRef = db.collection("users").document(uid)
@@ -659,7 +720,7 @@ class IdeaRepository(
             location = location.trim(),
             avatarUrl = avatarUrl,
             projectsCount = existingProjectsCount,
-            isPublic = true
+            isPublic = isPublic
         )
         try {
             val batch = db.batch()
@@ -680,6 +741,42 @@ class IdeaRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.UPDATE, userRef.path, auth)
+            throw e
+        }
+    }
+
+    suspend fun updateTalentVisibility(isPublic: Boolean) {
+        val uid = requireUserId()
+        val talentRef = db.collection("talents").document(uid)
+        try {
+            val snap = talentRef.get().await()
+            if (snap.exists()) {
+                talentRef.update(
+                    mapOf(
+                        "isPublic" to isPublic,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                val name = auth.currentUser?.displayName?.takeIf { it.isNotBlank() } ?: "Innovator"
+                val talent = TalentProfile(
+                    userId = uid,
+                    name = name,
+                    role = "Creator",
+                    headline = "Independent Innovator & Builder",
+                    bio = "Collaborating on IDEA2IMPACT.",
+                    skills = listOf("Product Strategy", "Prototyping"),
+                    location = "India",
+                    avatarUrl = auth.currentUser?.photoUrl?.toString(),
+                    projectsCount = 0L,
+                    isPublic = isPublic
+                )
+                talentRef.set(talent.toCreateMap()).await()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, talentRef.path, auth)
             throw e
         }
     }

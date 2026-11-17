@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.util.Log
 import com.example.data.local.InnovationDao
+import com.example.data.local.SearchHistoryDao
 import com.example.data.local.toCachedEntity
 import com.example.data.local.toDomain
 import com.example.data.model.AuthUser
@@ -26,6 +27,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -55,13 +58,10 @@ import kotlin.coroutines.cancellation.CancellationException
 
 class BackendRepository(
     private val tokenManager: TokenManager,
-    private val innovationDao: InnovationDao? = null
+    private val innovationDao: InnovationDao? = null,
+    private val searchHistoryDao: SearchHistoryDao? = null
 ) {
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-        coerceInputValues = true
-    }
+    private val json get() = sharedJson
 
     @Volatile
     private var backendAwake = false
@@ -69,9 +69,11 @@ class BackendRepository(
 
     private val api: Idea2ImpactApiService by lazy {
         val logging = HttpLoggingInterceptor { msg ->
-            Log.d(TAG, msg)
+            Log.d(TAG, SanaPromptEngine.redactSensitiveInfo(msg))
         }.apply {
             level = HttpLoggingInterceptor.Level.BASIC
+            redactHeader("Authorization")
+            redactHeader("x-goog-api-key")
         }
 
         val retryInterceptor = ExponentialBackoffRetryInterceptor(
@@ -178,10 +180,17 @@ class BackendRepository(
             val err = response.errorBody()?.string().orEmpty()
             val msg = extractErrorMessage(err)
                 ?: "Request failed (${response.code()} ${response.message()})"
-            throw BackendApiException(response.code(), msg)
+            throw BackendApiException(response.code(), SanaPromptEngine.redactSensitiveInfo(msg))
         }
         if (raw.isBlank()) return JsonObject(emptyMap())
-        return json.parseToJsonElement(raw)
+        return try {
+            json.parseToJsonElement(raw)
+        } catch (e: SerializationException) {
+            throw BackendApiException(
+                code = response.code().takeIf { it > 0 } ?: 502,
+                message = "The backend returned an unreadable non-JSON response (HTTP ${response.code()}). It may be waking up or temporarily unavailable."
+            )
+        }
     }
 
     private fun extractErrorMessage(raw: String): String? {
@@ -298,6 +307,33 @@ class BackendRepository(
             resolved.mapIndexed { idx, item -> item.toCachedEntity(sortOrder = idx, cachedAt = now) }
         )
         resolved
+    }
+
+    // --- Local Marketplace Search History ---
+
+    fun observeRecentSearches(limit: Int = MAX_RECENT_SEARCHES): Flow<List<String>> {
+        val dao = searchHistoryDao ?: return flowOf(emptyList())
+        return dao.observeRecentSearches(limit).map { entries -> entries.map { it.query } }
+    }
+
+    suspend fun recordMarketplaceSearch(query: String) = withContext(Dispatchers.IO) {
+        val clean = query.trim()
+        if (clean.isBlank()) return@withContext
+        searchHistoryDao?.recordSearch(
+            rawQuery = clean,
+            searchedAt = System.currentTimeMillis(),
+            maxEntries = MAX_RECENT_SEARCHES
+        )
+    }
+
+    suspend fun deleteRecentSearch(query: String) = withContext(Dispatchers.IO) {
+        val normalized = query.trim().lowercase()
+        if (normalized.isBlank()) return@withContext
+        searchHistoryDao?.deleteByNormalizedQuery(normalized)
+    }
+
+    suspend fun clearRecentSearches() = withContext(Dispatchers.IO) {
+        searchHistoryDao?.clearAllSearches()
     }
 
     // --- Innovations ---
@@ -585,30 +621,26 @@ class BackendRepository(
     suspend fun sendAiChat(
         prompt: String,
         context: String = "",
-        customApiKey: String? = tokenManager.getCustomApiKey()
+        customApiKey: String? = tokenManager.getCustomApiKey(),
+        useFastModel: Boolean = false
     ): String = withContext(Dispatchers.IO) {
+        val cleanKey = validateCustomApiKey(customApiKey)
+
         val payload = buildJsonObject {
             put("prompt", prompt.trim())
             put("context", context.trim())
-            if (!customApiKey.isNullOrBlank()) {
-                put("apiKey", customApiKey.trim())
+            put("fastMode", useFastModel)
+            if (!cleanKey.isNullOrEmpty()) {
+                put("apiKey", cleanKey)
             }
         }.toRequestBody()
 
-        val root = executeWithColdStartRetry(retryOnTimeout = true) {
-            parseRoot(api.aiChat(payload))
+        val root = withTimeout(55_000L) {
+            executeWithColdStartRetry(retryOnTimeout = true) {
+                parseRoot(api.aiChat(payload))
+            }
         }
-        val obj = root.asObjOrEmpty()
-        obj.str("reply")
-            ?: obj.str("response")
-            ?: obj.str("answer")
-            ?: obj.str("text")
-            ?: obj.str("content")
-            ?: obj.str("message")
-            ?: obj.obj("data")?.str("reply")
-            ?: obj.obj("data")?.str("response")
-            ?: obj.obj("data")?.str("text")
-            ?: "Response received from AI Sana."
+        extractAiChatReply(root)
     }
 
     // --- JSON Parsers ---
@@ -806,10 +838,86 @@ class BackendRepository(
     private fun JsonObject.doubleVal(key: String): Double? = (this[key] as? JsonPrimitive)?.doubleOrNull
     private fun JsonObject.boolVal(key: String): Boolean? = (this[key] as? JsonPrimitive)?.booleanOrNull
 
-    private companion object {
+    internal companion object {
         const val TAG = "BackendRepository"
         const val BASE_URL = "https://idea2impact-g8fe.onrender.com/api/"
+        const val MAX_RECENT_SEARCHES = 10
         val RETRYABLE_HTTP_CODES = setOf(502, 503, 504)
+        private val sharedJson = Json {
+            ignoreUnknownKeys = true
+            isLenient = true
+            coerceInputValues = true
+        }
+
+        private fun JsonElement.asObjOrEmpty(): JsonObject = (this as? JsonObject) ?: JsonObject(emptyMap())
+        private fun JsonElement.asStr(): String? = (this as? JsonPrimitive)?.takeIf { !it.isString || it.content != "null" }?.content
+        private fun JsonObject.str(key: String): String? = this[key]?.asStr()?.takeIf { it.isNotBlank() && it != "null" }
+        private fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
+        private fun JsonObject.intVal(key: String): Int? = (this[key] as? JsonPrimitive)?.intOrNull
+            ?: (this[key] as? JsonPrimitive)?.doubleOrNull?.toInt()
+        private fun JsonObject.boolVal(key: String): Boolean? = (this[key] as? JsonPrimitive)?.booleanOrNull
+
+        internal fun validateCustomApiKey(customApiKey: String?): String? {
+            val cleanKey = customApiKey?.trim()
+            if (!cleanKey.isNullOrEmpty() && (cleanKey.length < 16 || cleanKey.any { it.isWhitespace() })) {
+                throw BackendApiException(
+                    code = 400,
+                    message = "The saved custom API key format is invalid. Check Key Settings or switch back to Default AI."
+                )
+            }
+            return cleanKey
+        }
+
+        internal fun parseAiChatResponse(rawJson: String, httpCode: Int = 200): String {
+            if (rawJson.isBlank()) {
+                throw IllegalStateException("AI Sana backend returned an empty response.")
+            }
+            val root = try {
+                sharedJson.parseToJsonElement(rawJson)
+            } catch (e: SerializationException) {
+                throw BackendApiException(
+                    code = if (httpCode in 400..599) httpCode else 502,
+                    message = "Custom AI backend returned a non-JSON response (HTTP $httpCode)."
+                )
+            }
+            return extractAiChatReply(root)
+        }
+
+        internal fun extractAiChatReply(root: JsonElement): String {
+            val obj = root.asObjOrEmpty()
+            val dataObj = obj.obj("data")
+            val explicitError = obj.str("error")
+                ?: obj.obj("error")?.str("message")
+                ?: dataObj?.str("error")
+                ?: dataObj?.obj("error")?.str("message")
+            val isExplicitFailure = obj.boolVal("success") == false ||
+                obj.boolVal("ok") == false ||
+                dataObj?.boolVal("success") == false
+
+            if (!explicitError.isNullOrBlank() || isExplicitFailure) {
+                val code = obj.intVal("statusCode")
+                    ?: obj.intVal("code")
+                    ?: obj.obj("error")?.intVal("code")
+                    ?: 502
+                val errMsg = explicitError
+                    ?: obj.str("message")
+                    ?: obj.str("detail")
+                    ?: "Custom AI backend returned an error."
+                throw BackendApiException(code, SanaPromptEngine.redactSensitiveInfo(errMsg))
+            }
+
+            val text = obj.str("reply")
+                ?: obj.str("response")
+                ?: obj.str("answer")
+                ?: obj.str("text")
+                ?: obj.str("content")
+                ?: dataObj?.str("reply")
+                ?: dataObj?.str("response")
+                ?: dataObj?.str("text")
+                ?: obj.str("message")
+            return text?.takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("AI Sana backend returned an empty or unrecognized response.")
+        }
     }
 }
 

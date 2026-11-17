@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Login
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RocketLaunch
@@ -57,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.AuthUser
 import com.example.data.model.BackendInnovation
 import com.example.data.model.DashboardStats
+import com.example.data.model.Proposal
 import com.example.data.model.UiState
 import com.example.ui.components.BackendInnovationCard
 import com.example.ui.components.CapitalPipeline3D
@@ -72,16 +74,21 @@ fun DashboardScreen(
     currentUser: AuthUser?,
     dashboardState: UiState<DashboardStats>,
     isRefreshing: Boolean = false,
+    incomingProposals: List<Proposal> = emptyList(),
+    sentProposals: List<Proposal> = emptyList(),
+    isBusy: Boolean = false,
     onOpenAuth: () -> Unit,
     onRefresh: () -> Unit,
     onOpenDetail: (BackendInnovation) -> Unit,
     onToggleLike: (BackendInnovation) -> Unit,
     onToggleBookmark: (BackendInnovation) -> Unit,
     onOpenPricing: () -> Unit,
+    onOpenMatches: () -> Unit = {},
+    onRespondToProposal: (proposalId: String, accept: Boolean) -> Unit = { _, _ -> },
     onSignOut: () -> Unit
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("My Innovations", "Saved", "Inbound Proposals")
+    val tabs = listOf("My Innovations", "Saved", "Proposals")
     val haptics = LocalHapticFeedbackManager.current
 
     val stats = (dashboardState as? UiState.Success)?.data ?: DashboardStats()
@@ -227,16 +234,32 @@ fun DashboardScreen(
         }
 
         item {
-            OutlinedButton(
-                onClick = {
-                    haptics.tap()
-                    onOpenPricing()
-                },
-                modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).testTag("dashboard_pricing_button")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(Icons.Filled.RocketLaunch, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("View Plans & Pricing")
+                OutlinedButton(
+                    onClick = {
+                        haptics.tap()
+                        onOpenPricing()
+                    },
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("dashboard_pricing_button")
+                ) {
+                    Icon(Icons.Filled.RocketLaunch, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Plans & Pricing", maxLines = 1)
+                }
+                OutlinedButton(
+                    onClick = {
+                        haptics.tap()
+                        onOpenMatches()
+                    },
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("dashboard_find_matches_button")
+                ) {
+                    Icon(Icons.Filled.Hub, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Find Matches", maxLines = 1)
+                }
             }
         }
 
@@ -372,52 +395,91 @@ fun DashboardScreen(
                                         }
                                     }
                                     else -> {
-                                        if (stats.inboundProposals.isEmpty()) {
-                                            EmptyTabMessage("No inbound collaboration proposals yet.")
+                                        if (stats.inboundProposals.isEmpty() && incomingProposals.isEmpty() && sentProposals.isEmpty()) {
+                                            EmptyTabMessage("No collaboration proposals yet.")
                                         } else {
-                                            stats.inboundProposals.forEach { prop ->
-                                                Surface(
-                                                    color = MaterialTheme.colorScheme.surface,
-                                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                                                    shape = RoundedCornerShape(16.dp),
-                                                    modifier = Modifier.fillMaxWidth()
-                                                ) {
-                                                    Column(
-                                                        modifier = Modifier.padding(14.dp),
-                                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                            if (incomingProposals.isNotEmpty()) {
+                                                Text(
+                                                    text = "Inbound Proposals (${incomingProposals.size})",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                incomingProposals.forEach { prop ->
+                                                    FirestoreProposalCard(
+                                                        proposal = prop,
+                                                        isInbound = true,
+                                                        isBusy = isBusy,
+                                                        onAccept = { onRespondToProposal(prop.id, true) },
+                                                        onDecline = { onRespondToProposal(prop.id, false) }
+                                                    )
+                                                }
+                                            }
+                                            if (stats.inboundProposals.isNotEmpty()) {
+                                                Text(
+                                                    text = "Marketplace Inbound (${stats.inboundProposals.size})",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                stats.inboundProposals.forEach { prop ->
+                                                    Surface(
+                                                        color = MaterialTheme.colorScheme.surface,
+                                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                                        shape = RoundedCornerShape(16.dp),
+                                                        modifier = Modifier.fillMaxWidth()
                                                     ) {
-                                                        Row(
-                                                            modifier = Modifier.fillMaxWidth(),
-                                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                                            verticalAlignment = Alignment.CenterVertically
+                                                        Column(
+                                                            modifier = Modifier.padding(14.dp),
+                                                            verticalArrangement = Arrangement.spacedBy(6.dp)
                                                         ) {
-                                                            Text(prop.innovationTitle, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                                                            Surface(
-                                                                color = MaterialTheme.colorScheme.primaryContainer,
-                                                                shape = RoundedCornerShape(8.dp)
+                                                            Row(
+                                                                modifier = Modifier.fillMaxWidth(),
+                                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                                verticalAlignment = Alignment.CenterVertically
                                                             ) {
+                                                                Text(prop.innovationTitle, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                                                Surface(
+                                                                    color = MaterialTheme.colorScheme.primaryContainer,
+                                                                    shape = RoundedCornerShape(8.dp)
+                                                                ) {
+                                                                    Text(
+                                                                        prop.proposalType,
+                                                                        style = MaterialTheme.typography.labelSmall,
+                                                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                                    )
+                                                                }
+                                                            }
+                                                            Text(
+                                                                "From ${prop.senderName}${if (prop.amount.isNotBlank()) " · ${prop.amount}" else ""}",
+                                                                style = MaterialTheme.typography.labelMedium,
+                                                                color = MaterialTheme.colorScheme.primary
+                                                            )
+                                                            Text(prop.message, style = MaterialTheme.typography.bodySmall)
+                                                            if (prop.contactInfo.isNotBlank()) {
                                                                 Text(
-                                                                    prop.proposalType,
+                                                                    "Contact: ${prop.contactInfo}",
                                                                     style = MaterialTheme.typography.labelSmall,
-                                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                                                 )
                                                             }
                                                         }
-                                                        Text(
-                                                            "From ${prop.senderName}${if (prop.amount.isNotBlank()) " · ${prop.amount}" else ""}",
-                                                            style = MaterialTheme.typography.labelMedium,
-                                                            color = MaterialTheme.colorScheme.primary
-                                                        )
-                                                        Text(prop.message, style = MaterialTheme.typography.bodySmall)
-                                                        if (prop.contactInfo.isNotBlank()) {
-                                                            Text(
-                                                                "Contact: ${prop.contactInfo}",
-                                                                style = MaterialTheme.typography.labelSmall,
-                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                            )
-                                                        }
                                                     }
+                                                }
+                                            }
+                                            if (sentProposals.isNotEmpty()) {
+                                                Text(
+                                                    text = "Sent Requests (${sentProposals.size})",
+                                                    style = MaterialTheme.typography.titleSmall,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                sentProposals.forEach { prop ->
+                                                    FirestoreProposalCard(
+                                                        proposal = prop,
+                                                        isInbound = false,
+                                                        isBusy = isBusy,
+                                                        onAccept = {},
+                                                        onDecline = {}
+                                                    )
                                                 }
                                             }
                                         }
@@ -480,3 +542,112 @@ private fun EmptyTabMessage(message: String) {
         )
     }
 }
+
+@Composable
+private fun FirestoreProposalCard(
+    proposal: Proposal,
+    isInbound: Boolean,
+    isBusy: Boolean,
+    onAccept: () -> Unit,
+    onDecline: () -> Unit
+) {
+    val haptics = LocalHapticFeedbackManager.current
+    val statusColor = when (proposal.status) {
+        "ACCEPTED" -> EmeraldSuccess
+        "DECLINED" -> RoseError
+        else -> GoldAmber
+    }
+    Surface(
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth().testTag("proposal_card_${proposal.id}")
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = proposal.innovationTitle,
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f)
+                )
+                Surface(
+                    color = statusColor.copy(alpha = 0.16f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = proposal.status,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = statusColor,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+            Text(
+                text = if (isInbound) {
+                    "From ${proposal.senderName} · ${proposal.proposalType}${proposal.amount?.let { " · $it" }.orEmpty()}"
+                } else {
+                    "To ${proposal.recipientName ?: "Partner"} · ${proposal.proposalType}${proposal.amount?.let { " · $it" }.orEmpty()}"
+                },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = "Shared scope: ${proposal.sharedIdeaScope}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (!proposal.sharedIdeaSummary.isNullOrBlank()) {
+                Text(
+                    text = proposal.sharedIdeaSummary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(proposal.message, style = MaterialTheme.typography.bodySmall)
+            if (!proposal.contactInfo.isNullOrBlank()) {
+                Text(
+                    text = "Contact: ${proposal.contactInfo}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (isInbound && proposal.status == "PENDING") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = {
+                            haptics.success()
+                            onAccept()
+                        },
+                        enabled = !isBusy,
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                    ) {
+                        Text("Accept")
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            haptics.reject()
+                            onDecline()
+                        },
+                        enabled = !isBusy,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = RoseError),
+                        modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                    ) {
+                        Text("Decline")
+                    }
+                }
+            }
+        }
+    }
+}
+

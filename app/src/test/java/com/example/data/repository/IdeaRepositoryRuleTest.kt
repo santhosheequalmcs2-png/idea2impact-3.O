@@ -207,6 +207,97 @@ class IdeaRepositoryRuleTest : FirestoreEmulatorTestBase() {
         assertThat(firestoreException.code).isEqualTo(FirebaseFirestoreException.Code.PERMISSION_DENIED)
     }
 
+    @Test
+    fun collaborationProposals_talentVisibilityAndSavedOpportunities_enforcesRules() = runBlocking {
+        val aliceUid = signInTestUser(ALICE_EMAIL)
+        val aliceRepo = IdeaRepository(firestore, auth)
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            aliceRepo.updateUserProfile(
+                name = "Alice Chen",
+                role = "Creator",
+                headline = "Biotech Founder",
+                bio = "Building clean diagnostics.",
+                skills = listOf("Bioengineering", "Microfluidics"),
+                location = "Bengaluru, India",
+                existingProjectsCount = 1L,
+                isPublic = false
+            )
+        }
+
+        val myTalentPrivate = withTimeout(FLOW_TIMEOUT_MS) {
+            aliceRepo.observeMyTalentProfile(aliceUid).first { it != null }
+        }
+        assertThat(myTalentPrivate?.isPublic).isFalse()
+
+        // Make Alice discoverable again so Bob can send a direct collaboration proposal
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            aliceRepo.updateTalentVisibility(true)
+        }
+
+        val bobUid = signInTestUser(BOB_EMAIL)
+        val bobRepo = IdeaRepository(firestore, auth)
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            bobRepo.updateUserProfile(
+                name = "Bob Mentor",
+                role = "Investor",
+                headline = "Climate Mentor",
+                bio = "Mentoring Indian founders.",
+                skills = listOf("Mentorship", "Regulatory"),
+                location = "Mumbai, India",
+                existingProjectsCount = 2L,
+                isPublic = true
+            )
+            bobRepo.submitCollaborationProposal(
+                recipientId = aliceUid,
+                recipientName = "Alice Chen",
+                innovationId = null,
+                innovationTitle = "Direct Co-founder Intro",
+                proposalType = "Mentorship",
+                amount = null,
+                message = "Would like to mentor your validation study.",
+                contactInfo = "bob@mentor.example",
+                sharedIdeaScope = com.example.data.model.ShareIdeaScope.NONE,
+                sharedIdeaSummary = null,
+                senderProfile = UserProfile(userId = bobUid, name = "Bob Mentor")
+            )
+        }
+
+        val bobSent = withTimeout(FLOW_TIMEOUT_MS) {
+            bobRepo.observeSentProposals(bobUid).first { it.isNotEmpty() }
+        }
+        assertThat(bobSent.first().innovationId).isEqualTo("none")
+        assertThat(bobSent.first().sharedIdeaScope).isEqualTo("NONE")
+
+        // Ecosystem saved opportunity bookmark round-trip (dynamic ID keeps warm emulator runs idempotent)
+        val ecoRepo = EcosystemRepository(firestore, auth, context = null)
+        val dynamicOrgId = "org_test_${UUID.randomUUID().toString().take(8)}"
+        val sampleOrg = com.example.data.model.VerifiedOrganization(
+            id = dynamicOrgId,
+            name = "Test India Incubator",
+            organizationType = "Incubator",
+            sector = "Biotech",
+            location = "Bengaluru, India",
+            sourceName = "Official Registry",
+            sourceUrl = "https://example.org/incubator",
+            lastVerifiedAt = "2026-11-16"
+        )
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            ecoRepo.toggleSavedOpportunity(sampleOrg, currentlySaved = false)
+        }
+        val savedIds = withTimeout(FLOW_TIMEOUT_MS) {
+            ecoRepo.observeCloudSavedOpportunityIds(bobUid).first { it.contains(dynamicOrgId) }
+        }
+        assertThat(savedIds).contains(dynamicOrgId)
+
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            ecoRepo.toggleSavedOpportunity(sampleOrg, currentlySaved = true)
+        }
+        val afterUnsave = withTimeout(FLOW_TIMEOUT_MS) {
+            ecoRepo.observeCloudSavedOpportunityIds(bobUid).first { !it.contains(dynamicOrgId) }
+        }
+        assertThat(afterUnsave).doesNotContain(dynamicOrgId)
+    }
+
     private companion object {
         const val ALICE_EMAIL = "alice_i2i@test.com"
         const val BOB_EMAIL = "bob_i2i@test.com"

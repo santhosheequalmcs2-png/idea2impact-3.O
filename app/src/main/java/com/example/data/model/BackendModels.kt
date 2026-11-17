@@ -114,12 +114,47 @@ data class DashboardStats(
     val inboundProposals: List<BackendProposal> = emptyList()
 )
 
+enum class AiRequestPhase {
+    IDLE,
+    CHECKING_CONNECTION,
+    THINKING,
+    RETRYING,
+    SWITCHING_MODEL,
+    STREAMING
+}
+
+enum class AiFailureCategory {
+    NONE,
+    TIMEOUT,
+    NETWORK_OFFLINE,
+    APP_CHECK_OR_AUTH,
+    MODEL_UNAVAILABLE,
+    QUOTA_OR_RATE_LIMIT,
+    PROVIDER_OVERLOAD,
+    CUSTOM_KEY_OR_BACKEND,
+    STREAMING_INTERRUPTION,
+    EMPTY_RESPONSE,
+    UNKNOWN
+}
+
+data class AiStatusUiState(
+    val phase: AiRequestPhase = AiRequestPhase.IDLE,
+    val label: String = "",
+    val hint: String = ""
+)
+
 data class CopilotMessage(
     val id: String,
     val isAssistant: Boolean,
     val content: String,
     val timestamp: String,
-    val isError: Boolean = false
+    val isError: Boolean = false,
+    val isTimeout: Boolean = false,
+    val hasPartialTimeoutOutput: Boolean = false,
+    val respondingModelLabel: String? = null,
+    val modelNotice: String? = null,
+    val offerFastFallback: Boolean = false,
+    val offerDefaultAiFallback: Boolean = false
 )
 
 data class DigitalNdaRecord(

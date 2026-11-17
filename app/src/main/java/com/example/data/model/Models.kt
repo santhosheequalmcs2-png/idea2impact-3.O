@@ -4,6 +4,7 @@ import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.IgnoreExtraProperties
+import com.google.firebase.firestore.PropertyName
 import com.google.firebase.firestore.ServerTimestamp
 
 sealed interface UiState<out T> {
@@ -118,6 +119,8 @@ data class Innovation(
     val likeCount: Long = 0L,
     val commentCount: Long = 0L,
     val stageIndex: Long = 0L,
+    @get:PropertyName("isShowcaseSeed")
+    @field:PropertyName("isShowcaseSeed")
     val isShowcaseSeed: Boolean = false,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
@@ -207,6 +210,8 @@ data class TalentProfile(
     val location: String = "",
     val avatarUrl: String? = null,
     val projectsCount: Long = 0L,
+    @get:PropertyName("isPublic")
+    @field:PropertyName("isPublic")
     val isPublic: Boolean = true,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
@@ -256,12 +261,15 @@ data class Proposal(
     val senderHeadline: String? = null,
     val senderLocation: String? = null,
     val recipientId: String = "",
+    val recipientName: String? = null,
     val innovationId: String = "",
     val innovationTitle: String = "",
     val proposalType: String = "Collaboration",
     val amount: String? = null,
     val message: String = "",
     val contactInfo: String? = null,
+    val sharedIdeaScope: String? = null,
+    val sharedIdeaSummary: String? = null,
     val status: String = "PENDING",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
@@ -273,12 +281,15 @@ data class Proposal(
             "senderHeadline" to senderHeadline?.take(200),
             "senderLocation" to senderLocation?.take(120),
             "recipientId" to recipientId,
+            "recipientName" to recipientName?.takeIf { it.isNotBlank() }?.take(120),
             "innovationId" to innovationId,
             "innovationTitle" to innovationTitle.take(160),
             "proposalType" to proposalType,
             "amount" to amount?.takeIf { it.isNotBlank() }?.take(120),
             "message" to message.take(2500),
             "contactInfo" to contactInfo?.takeIf { it.isNotBlank() }?.take(200),
+            "sharedIdeaScope" to sharedIdeaScope?.takeIf { it.isNotBlank() }?.take(40),
+            "sharedIdeaSummary" to sharedIdeaSummary?.takeIf { it.isNotBlank() }?.take(1500),
             "status" to "PENDING",
             "createdAt" to FieldValue.serverTimestamp(),
             "updatedAt" to FieldValue.serverTimestamp()

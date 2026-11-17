@@ -12,6 +12,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -31,6 +35,11 @@ service cloud.firestore {
     function isValidStringList(listVal, maxItems) {
       return listVal is list && listVal.size() <= maxItems &&
              (listVal.size() == 0 || (listVal[0] is string && listVal[0].size() <= 64));
+    }
+
+    function isValidOpportunityList(listVal, maxItems) {
+      return listVal is list && listVal.size() <= maxItems &&
+             (listVal.size() == 0 || (listVal[0] is string && listVal[0].size() <= 160));
     }
 
     // --- Entity Validators ---
@@ -158,20 +167,71 @@ service cloud.firestore {
              data.updatedAt is timestamp && data.updatedAt <= request.time;
     }
 
+    function isValidSavedOpportunity(data) {
+      return data.keys().hasAll(['userId', 'organizationId', 'organizationName', 'organizationType', 'sector', 'createdAt']) &&
+             data.keys().hasOnly(['userId', 'organizationId', 'organizationName', 'organizationType', 'sector', 'sourceUrl', 'lastVerifiedAt', 'createdAt']) &&
+             isValidId(data.userId) &&
+             isValidId(data.organizationId) &&
+             isBoundedString(data.organizationName, 1, 160) &&
+             isBoundedString(data.organizationType, 1, 60) &&
+             isBoundedString(data.sector, 1, 80) &&
+             (!('sourceUrl' in data) || data.sourceUrl == null || isBoundedString(data.sourceUrl, 0, 500)) &&
+             (!('lastVerifiedAt' in data) || data.lastVerifiedAt == null || isBoundedString(data.lastVerifiedAt, 0, 32)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidVerifiedOrganization(data) {
+      return data.keys().hasAll([
+               'name', 'organizationType', 'sector', 'description', 'location',
+               'sourceName', 'sourceUrl', 'verificationStatus', 'lastVerifiedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'name', 'organizationType', 'sector', 'description', 'location',
+               'stageOrFocus', 'website', 'publicContactChannel', 'publicOpportunities',
+               'eligibility', 'geography', 'deadline', 'sourceName', 'sourceUrl',
+               'verificationStatus', 'lastVerifiedAt', 'updatedAt'
+             ]) &&
+             isBoundedString(data.name, 2, 160) &&
+             data.organizationType in ['Startup', 'Company', 'Investor', 'Accelerator', 'Incubator', 'Government Program'] &&
+             isBoundedString(data.sector, 2, 80) &&
+             isBoundedString(data.description, 0, 2000) &&
+             isBoundedString(data.location, 2, 120) &&
+             (!('stageOrFocus' in data) || data.stageOrFocus == null || isBoundedString(data.stageOrFocus, 0, 160)) &&
+             (!('website' in data) || data.website == null || isBoundedString(data.website, 0, 500)) &&
+             (!('publicContactChannel' in data) || data.publicContactChannel == null || isBoundedString(data.publicContactChannel, 0, 300)) &&
+              (!('publicOpportunities' in data) || isValidOpportunityList(data.publicOpportunities, 10)) &&
+             (!('eligibility' in data) || data.eligibility == null || isBoundedString(data.eligibility, 0, 500)) &&
+             (!('geography' in data) || data.geography == null || isBoundedString(data.geography, 0, 120)) &&
+             (!('deadline' in data) || data.deadline == null || isBoundedString(data.deadline, 0, 80)) &&
+             isBoundedString(data.sourceName, 2, 160) &&
+             isBoundedString(data.sourceUrl, 8, 500) &&
+             data.verificationStatus in ['VERIFIED', 'NEEDS_REVIEW', 'UNVERIFIED'] &&
+             isBoundedString(data.lastVerifiedAt, 4, 32) &&
+             (!('updatedAt' in data) || (data.updatedAt is timestamp && data.updatedAt <= request.time));
+    }
+
     function isValidProposal(data) {
       return data.keys().hasAll(['senderId', 'senderName', 'recipientId', 'innovationId', 'innovationTitle', 'proposalType', 'message', 'status', 'createdAt', 'updatedAt']) &&
-             data.keys().hasOnly(['senderId', 'senderName', 'senderHeadline', 'senderLocation', 'recipientId', 'innovationId', 'innovationTitle', 'proposalType', 'amount', 'message', 'contactInfo', 'status', 'createdAt', 'updatedAt']) &&
+             data.keys().hasOnly([
+               'senderId', 'senderName', 'senderHeadline', 'senderLocation',
+               'recipientId', 'recipientName', 'innovationId', 'innovationTitle',
+               'proposalType', 'amount', 'message', 'contactInfo',
+               'sharedIdeaScope', 'sharedIdeaSummary', 'status', 'createdAt', 'updatedAt'
+             ]) &&
              isValidId(data.senderId) &&
              isBoundedString(data.senderName, 1, 120) &&
              (!('senderHeadline' in data) || data.senderHeadline == null || isBoundedString(data.senderHeadline, 0, 200)) &&
              (!('senderLocation' in data) || data.senderLocation == null || isBoundedString(data.senderLocation, 0, 120)) &&
              isValidId(data.recipientId) &&
+             (!('recipientName' in data) || data.recipientName == null || isBoundedString(data.recipientName, 0, 120)) &&
              isValidId(data.innovationId) &&
              isBoundedString(data.innovationTitle, 1, 160) &&
-             data.proposalType in ['Investment', 'Licensing', 'Co-founder', 'Acquisition', 'Collaboration'] &&
+             data.proposalType in ['Investment', 'Licensing', 'Co-founder', 'Acquisition', 'Collaboration', 'Mentorship'] &&
              (!('amount' in data) || data.amount == null || isBoundedString(data.amount, 0, 120)) &&
              isBoundedString(data.message, 5, 2500) &&
              (!('contactInfo' in data) || data.contactInfo == null || isBoundedString(data.contactInfo, 0, 200)) &&
+             (!('sharedIdeaScope' in data) || data.sharedIdeaScope == null || isBoundedString(data.sharedIdeaScope, 0, 40)) &&
+             (!('sharedIdeaSummary' in data) || data.sharedIdeaSummary == null || isBoundedString(data.sharedIdeaSummary, 0, 1500)) &&
              data.status in ['PENDING', 'ACCEPTED', 'DECLINED'] &&
              data.createdAt is timestamp && data.createdAt <= request.time &&
              data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -200,6 +260,16 @@ service cloud.firestore {
                          incoming().innovationId == innovationId;
         allow update: if false;
         allow delete: if isSignedIn() && isValidId(userId) && isValidId(innovationId) && request.auth.uid == userId;
+      }
+
+      match /saved_opportunities/{orgId} {
+        allow get, list: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn() && isValidId(userId) && isValidId(orgId) && request.auth.uid == userId &&
+                         isValidSavedOpportunity(incoming()) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().organizationId == orgId;
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(orgId) && request.auth.uid == userId;
       }
 
       match /liked/{innovationId} {
@@ -305,7 +375,7 @@ service cloud.firestore {
       allow delete: if isSignedIn() && isValidId(talentId) && existing().userId == request.auth.uid;
     }
 
-    // 4. Partnership & Investment Proposals
+    // 4. Partnership & Collaboration Proposals
     match /proposals/{proposalId} {
       allow get: if isSignedIn() && isValidId(proposalId) &&
                     resource != null &&
@@ -315,8 +385,13 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(proposalId) &&
                        isValidProposal(incoming()) &&
                        incoming().senderId == request.auth.uid &&
-                       incoming().status == 'PENDING' &&
-                       exists(/databases/$(database)/documents/innovations/$(incoming().innovationId));
+                       incoming().status == 'PENDING' && (
+                         (incoming().innovationId != 'none' &&
+                          exists(/databases/$(database)/documents/innovations/$(incoming().innovationId))) ||
+                         (incoming().innovationId == 'none' &&
+                          incoming().recipientId != request.auth.uid &&
+                          exists(/databases/$(database)/documents/talents/$(incoming().recipientId)))
+                       );
       allow update: if isSignedIn() && isValidId(proposalId) &&
                        isValidProposal(incoming()) &&
                        existing().status == 'PENDING' &&
@@ -329,6 +404,17 @@ service cloud.firestore {
                        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
       allow delete: if isSignedIn() && isValidId(proposalId) &&
                        (existing().senderId == request.auth.uid || existing().recipientId == request.auth.uid);
+    }
+
+    // 5. Curated & Verified Indian Startup / Organization / Funding Directory
+    match /verified_organizations/{orgId} {
+      allow get: if isSignedIn() && isValidId(orgId) &&
+                    resource != null &&
+                    (existing().verificationStatus in ['VERIFIED', 'NEEDS_REVIEW'] || isAdmin());
+      allow list: if isSignedIn() &&
+                     (existing().verificationStatus in ['VERIFIED', 'NEEDS_REVIEW'] || isAdmin());
+      allow create, update: if isAdmin() && isValidId(orgId) && isValidVerifiedOrganization(incoming());
+      allow delete: if isAdmin() && isValidId(orgId);
     }
   }
 }

@@ -156,20 +156,70 @@
         "senderHeadline": { "type": "string" },
         "senderLocation": { "type": "string" },
         "recipientId": { "type": "string" },
+        "recipientName": { "type": "string" },
         "innovationId": { "type": "string" },
         "innovationTitle": { "type": "string" },
         "proposalType": {
           "type": "string",
-          "enum": ["Investment", "Licensing", "Co-founder", "Acquisition", "Collaboration"]
+          "enum": ["Investment", "Licensing", "Co-founder", "Acquisition", "Collaboration", "Mentorship"]
         },
         "amount": { "type": "string" },
         "message": { "type": "string" },
         "contactInfo": { "type": "string" },
+        "sharedIdeaScope": { "type": "string" },
+        "sharedIdeaSummary": { "type": "string" },
         "status": { "type": "string", "enum": ["PENDING", "ACCEPTED", "DECLINED"] },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["senderId", "senderName", "recipientId", "innovationId", "innovationTitle", "proposalType", "message", "status", "createdAt", "updatedAt"]
+    },
+    "VerifiedOrganization": {
+      "title": "VerifiedOrganization",
+      "description": "Curated, source-attributed Indian startup, organization, investor, accelerator, or government program entry.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "organizationType": {
+          "type": "string",
+          "enum": ["Startup", "Company", "Investor", "Accelerator", "Incubator", "Government Program"]
+        },
+        "sector": { "type": "string" },
+        "description": { "type": "string" },
+        "location": { "type": "string" },
+        "stageOrFocus": { "type": "string" },
+        "website": { "type": "string" },
+        "publicContactChannel": { "type": "string" },
+        "publicOpportunities": { "type": "array" },
+        "eligibility": { "type": "string" },
+        "geography": { "type": "string" },
+        "deadline": { "type": "string" },
+        "sourceName": { "type": "string" },
+        "sourceUrl": { "type": "string" },
+        "verificationStatus": {
+          "type": "string",
+          "enum": ["VERIFIED", "NEEDS_REVIEW", "UNVERIFIED"]
+        },
+        "lastVerifiedAt": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "organizationType", "sector", "description", "location", "sourceName", "sourceUrl", "verificationStatus", "lastVerifiedAt"]
+    },
+    "SavedOpportunity": {
+      "title": "SavedOpportunity",
+      "description": "User-bookmarked verified organization or funding opportunity.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "organizationId": { "type": "string" },
+        "organizationName": { "type": "string" },
+        "organizationType": { "type": "string" },
+        "sector": { "type": "string" },
+        "sourceUrl": { "type": "string" },
+        "lastVerifiedAt": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "organizationId", "organizationName", "organizationType", "sector", "createdAt"]
     }
   },
   "firestore": {
@@ -180,6 +230,10 @@
     "/users/{userId}/saved/{innovationId}": {
       "schema": { "$ref": "#/entities/SavedItem" },
       "description": "User's bookmarked innovations."
+    },
+    "/users/{userId}/saved_opportunities/{orgId}": {
+      "schema": { "$ref": "#/entities/SavedOpportunity" },
+      "description": "User's saved verified organizations and funding opportunities."
     },
     "/users/{userId}/liked/{innovationId}": {
       "schema": { "$ref": "#/entities/LikedItem" },
@@ -208,6 +262,10 @@
     "/proposals/{proposalId}": {
       "schema": { "$ref": "#/entities/Proposal" },
       "description": "Partnership, licensing, and investment offers."
+    },
+    "/verified_organizations/{orgId}": {
+      "schema": { "$ref": "#/entities/VerifiedOrganization" },
+      "description": "Admin-curated verified Indian startup, organization, and funding directory."
     }
   }
 }

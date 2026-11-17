@@ -19,14 +19,17 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -41,16 +44,22 @@ import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DragIndicator
 import androidx.compose.material.icons.filled.OpenInFull
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -75,6 +84,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.example.analytics.LocalAnalyticsTracker
+import com.example.data.model.AiRequestPhase
+import com.example.data.model.AiStatusUiState
 import com.example.data.model.BackendInnovation
 import com.example.data.model.CopilotMessage
 import com.example.ui.theme.CobaltBlue
@@ -83,10 +94,16 @@ import com.example.ui.theme.EmeraldSuccess
 import com.example.util.LocalHapticFeedbackManager
 import kotlin.math.roundToInt
 
-private val POPUP_QUICK_PROMPTS = listOf(
+private val POPUP_INNOVATION_PROMPTS = listOf(
     "Summarize" to "Give a crisp 3-bullet executive summary of this innovation and its core edge.",
     "Valuation" to "Estimate realistic pre-seed/seed valuation benchmarks and key value drivers.",
     "IP Risks" to "List top 3 patentability / prior-art risks and how to protect the IP."
+)
+
+private val POPUP_GENERAL_PROMPTS = listOf(
+    "Review Idea" to "Evaluate my startup idea with strengths, risks, missing info, and a calibrated 1-10 early rating.",
+    "Validate Demand" to "Suggest 3 concrete customer discovery or demand validation tests for an early-stage idea.",
+    "Find Matches" to "What verified organizations or talent profiles in IDEA2IMPACT could support my concept?"
 )
 
 @Composable
@@ -95,11 +112,17 @@ fun MovableAiPopup(
     onExpandedChange: (Boolean) -> Unit,
     messages: List<CopilotMessage>,
     isLoading: Boolean,
+    aiStatus: AiStatusUiState = AiStatusUiState(),
     useFastModel: Boolean,
     activeContext: BackendInnovation?,
+    canRegenerate: Boolean = false,
     onToggleFastModel: (Boolean) -> Unit,
     onSendPrompt: (prompt: String, promptSource: String) -> Unit,
     onStopGeneration: () -> Unit = {},
+    onRegenerateLast: () -> Unit = {},
+    onRetryTimedOut: (String) -> Unit = {},
+    onSwitchToFastAndRetry: (String) -> Unit = {},
+    onSwitchToDefaultAiAndRetry: (String) -> Unit = {},
     onOpenFullCopilot: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -334,6 +357,7 @@ fun MovableAiPopup(
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp)
                         )
+                        val popupStatusLabel = aiStatus.label.ifBlank { if (isLoading) "Thinking..." else "" }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "AI Sana Pop-up",
@@ -341,13 +365,43 @@ fun MovableAiPopup(
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1
                             )
-                            Text(
-                                text = activeContext?.title ?: "Drag bar to move anywhere",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            if (isLoading && popupStatusLabel.isNotBlank()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                    modifier = Modifier.testTag("popup_status_indicator")
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(10.dp),
+                                        strokeWidth = 1.6.dp,
+                                        color = if (aiStatus.phase == AiRequestPhase.STREAMING) {
+                                            EmeraldSuccess
+                                        } else {
+                                            MaterialTheme.colorScheme.primary
+                                        }
+                                    )
+                                    Text(
+                                        text = popupStatusLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (aiStatus.phase == AiRequestPhase.STREAMING) {
+                                            EmeraldSuccess
+                                        } else {
+                                            MaterialTheme.colorScheme.primary
+                                        },
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            } else {
+                                Text(
+                                    text = activeContext?.title ?: "Drag bar to move anywhere",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
 
                         FilterChip(
@@ -397,11 +451,12 @@ fun MovableAiPopup(
                     }
 
                     // Quick Prompt Chips
+                    val quickPrompts = if (activeContext != null) POPUP_INNOVATION_PROMPTS else POPUP_GENERAL_PROMPTS
                     LazyRow(
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        items(POPUP_QUICK_PROMPTS) { (label, prompt) ->
+                        items(quickPrompts) { (label, prompt) ->
                             AssistChip(
                                 onClick = {
                                     if (!isLoading) {
@@ -429,37 +484,90 @@ fun MovableAiPopup(
                         contentPadding = PaddingValues(vertical = 4.dp)
                     ) {
                         items(messages, key = { it.id }) { msg ->
+                            val isLastMessage = msg.id == messages.lastOrNull()?.id
+                            val isCurrentlyStreaming = isLoading && msg.isAssistant && isLastMessage
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = if (msg.isAssistant) Arrangement.Start else Arrangement.End
                             ) {
                                 Surface(
-                                    color = if (msg.isAssistant) {
-                                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-                                    } else {
-                                        MaterialTheme.colorScheme.primaryContainer
+                                    color = when {
+                                        msg.isError -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.28f)
+                                        msg.isAssistant -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                                        else -> MaterialTheme.colorScheme.primaryContainer
                                     },
                                     shape = RoundedCornerShape(14.dp),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (msg.isError) MaterialTheme.colorScheme.error.copy(alpha = 0.65f)
+                                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
+                                    ),
                                     modifier = Modifier.widthIn(max = popupWidthDp - 44.dp)
                                 ) {
                                     Column(modifier = Modifier.padding(10.dp)) {
                                         if (msg.isAssistant && msg.content.isBlank() && isLoading) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                CircularProgressIndicator(
-                                                    modifier = Modifier.size(14.dp),
-                                                    strokeWidth = 2.dp
-                                                )
-                                                Text(
-                                                    text = "Thinking...",
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
+                                            val bubbleStatus = aiStatus.label.ifBlank { "Thinking..." }
+                                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    CircularProgressIndicator(
+                                                        modifier = Modifier.size(14.dp),
+                                                        strokeWidth = 2.dp
+                                                    )
+                                                    Text(
+                                                        text = bubbleStatus,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MaterialTheme.colorScheme.onSurface
+                                                    )
+                                                }
+                                                if (aiStatus.hint.isNotBlank()) {
+                                                    Text(
+                                                        text = aiStatus.hint,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
                                             }
                                         } else {
+                                            if (msg.isAssistant && !isCurrentlyStreaming && !msg.respondingModelLabel.isNullOrBlank() && msg.id != "welcome") {
+                                                Text(
+                                                    text = msg.respondingModelLabel,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = if (msg.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.padding(bottom = 4.dp)
+                                                )
+                                            }
+                                            if (msg.isAssistant && !msg.modelNotice.isNullOrBlank()) {
+                                                Surface(
+                                                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                                                    shape = RoundedCornerShape(8.dp),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(bottom = 6.dp)
+                                                        .testTag("popup_model_notice")
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Filled.Bolt,
+                                                            contentDescription = null,
+                                                            tint = MaterialTheme.colorScheme.primary,
+                                                            modifier = Modifier.size(13.dp)
+                                                        )
+                                                        Text(
+                                                            text = msg.modelNotice,
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                                                        )
+                                                    }
+                                                }
+                                            }
                                             MarkdownMessageContent(
                                                 raw = msg.content,
                                                 textColor = if (msg.isAssistant) {
@@ -472,6 +580,129 @@ fun MovableAiPopup(
                                                 textStyle = MaterialTheme.typography.bodySmall,
                                                 compact = true
                                             )
+                                            if (msg.isAssistant && !isCurrentlyStreaming && msg.isError) {
+                                                val isResume = msg.isTimeout && msg.hasPartialTimeoutOutput
+                                                val retryTag = if (msg.isTimeout) {
+                                                    "popup_timeout_action_button"
+                                                } else {
+                                                    "popup_error_retry_button"
+                                                }
+                                                Column(
+                                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                                                ) {
+                                                    Button(
+                                                        onClick = {
+                                                            haptics.tap()
+                                                            onRetryTimedOut(msg.id)
+                                                        },
+                                                        enabled = !isLoading,
+                                                        shape = RoundedCornerShape(10.dp),
+                                                        colors = ButtonDefaults.buttonColors(
+                                                            containerColor = MaterialTheme.colorScheme.primary,
+                                                            contentColor = MaterialTheme.colorScheme.onPrimary
+                                                        ),
+                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .heightIn(min = 48.dp)
+                                                            .testTag(retryTag)
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = if (isResume) Icons.Filled.PlayArrow else Icons.Filled.Refresh,
+                                                            contentDescription = if (isResume) {
+                                                                "Resume timed-out AI Sana response without re-typing"
+                                                            } else {
+                                                                "Retry failed AI Sana request without re-typing"
+                                                            },
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                        Spacer(Modifier.width(6.dp))
+                                                        Text(
+                                                            text = if (isResume) "Resume" else "Retry",
+                                                            style = MaterialTheme.typography.labelMedium
+                                                        )
+                                                    }
+
+                                                    if (msg.offerFastFallback && !useFastModel) {
+                                                        OutlinedButton(
+                                                            onClick = {
+                                                                haptics.tap()
+                                                                onSwitchToFastAndRetry(msg.id)
+                                                            },
+                                                            enabled = !isLoading,
+                                                            shape = RoundedCornerShape(10.dp),
+                                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .heightIn(min = 48.dp)
+                                                                .testTag("popup_switch_fast_button")
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Filled.Bolt,
+                                                                contentDescription = "Switch to AI Sana Fast mode and retry",
+                                                                modifier = Modifier.size(16.dp)
+                                                            )
+                                                            Spacer(Modifier.width(6.dp))
+                                                            Text(
+                                                                text = "Switch to Fast Mode",
+                                                                style = MaterialTheme.typography.labelMedium
+                                                            )
+                                                        }
+                                                    }
+
+                                                    if (msg.offerDefaultAiFallback) {
+                                                        OutlinedButton(
+                                                            onClick = {
+                                                                haptics.tap()
+                                                                onSwitchToDefaultAiAndRetry(msg.id)
+                                                            },
+                                                            enabled = !isLoading,
+                                                            shape = RoundedCornerShape(10.dp),
+                                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .heightIn(min = 48.dp)
+                                                                .testTag("popup_switch_default_ai_button")
+                                                        ) {
+                                                            Icon(
+                                                                imageVector = Icons.Filled.AutoAwesome,
+                                                                contentDescription = "Use default AI Sana and retry",
+                                                                modifier = Modifier.size(16.dp)
+                                                            )
+                                                            Spacer(Modifier.width(6.dp))
+                                                            Text(
+                                                                text = "Use Default AI",
+                                                                style = MaterialTheme.typography.labelMedium
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            } else if (msg.isAssistant && isLastMessage && !isCurrentlyStreaming && canRegenerate && msg.id != "welcome" && !msg.isError) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.End
+                                                ) {
+                                                    TextButton(
+                                                        onClick = {
+                                                            haptics.tap()
+                                                            onRegenerateLast()
+                                                        },
+                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                                        modifier = Modifier.testTag("popup_regenerate_reply")
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Filled.Refresh,
+                                                            contentDescription = "Retry response",
+                                                            modifier = Modifier.size(14.dp)
+                                                        )
+                                                        Text(
+                                                            text = " Retry",
+                                                            style = MaterialTheme.typography.labelSmall
+                                                        )
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }

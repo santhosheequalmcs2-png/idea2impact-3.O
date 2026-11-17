@@ -9,6 +9,12 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -46,6 +52,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
@@ -58,6 +65,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -85,6 +93,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.analytics.LocalAnalyticsTracker
+import com.example.data.model.AiRequestPhase
+import com.example.data.model.AiStatusUiState
 import com.example.data.model.BackendInnovation
 import com.example.data.model.CopilotMessage
 import com.example.ui.components.MarkdownMessageContent
@@ -133,6 +143,7 @@ private val QUICK_ACTIONS = listOf(
 fun CopilotScreen(
     messages: List<CopilotMessage>,
     isLoading: Boolean,
+    aiStatus: AiStatusUiState = AiStatusUiState(),
     customApiKey: String,
     availableInnovations: List<BackendInnovation> = emptyList(),
     focusedInnovation: BackendInnovation? = null,
@@ -144,6 +155,9 @@ fun CopilotScreen(
     onSendPrompt: (prompt: String, bitmap: Bitmap?, promptSource: String) -> Unit,
     onStopGeneration: () -> Unit = {},
     onRegenerateLast: () -> Unit = {},
+    onRetryTimedOut: (String) -> Unit = {},
+    onSwitchToFastAndRetry: (String) -> Unit = {},
+    onSwitchToDefaultAiAndRetry: (String) -> Unit = {},
     onResetChat: () -> Unit
 ) {
     var input by remember { mutableStateOf("") }
@@ -187,6 +201,8 @@ fun CopilotScreen(
     }
 
     val chipModelName = if (useFastModel) "AI Sana Fast" else "AI Sana"
+    val activeStatusLabel = aiStatus.label.ifBlank { if (isLoading) "Thinking..." else "" }
+    val activeStatusHint = aiStatus.hint
 
     Column(modifier = Modifier.fillMaxSize().imePadding()) {
         // Compact Header: "Idea Assistant" + Live Badge + Controls + Single Combined Context/Quick-Action Strip
@@ -220,21 +236,46 @@ fun CopilotScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(6.dp)
-                                    .clip(CircleShape)
-                                    .background(EmeraldSuccess)
-                            )
-                            Text(
-                                text = modelLabel.removePrefix("● "),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = EmeraldSuccess,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            if (isLoading && activeStatusLabel.isNotBlank()) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(9.dp),
+                                    strokeWidth = 1.5.dp,
+                                    color = if (aiStatus.phase == AiRequestPhase.STREAMING) {
+                                        EmeraldSuccess
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    }
+                                )
+                                Text(
+                                    text = activeStatusLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = if (aiStatus.phase == AiRequestPhase.STREAMING) {
+                                        EmeraldSuccess
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(EmeraldSuccess)
+                                )
+                                Text(
+                                    text = modelLabel.removePrefix("● "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = EmeraldSuccess,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
 
@@ -547,7 +588,11 @@ fun CopilotScreen(
                                             )
                                         }
                                         Text(
-                                            text = if (isCurrentlyStreaming) "$chipModelName · Thinking..." else chipModelName,
+                                            text = if (isCurrentlyStreaming) {
+                                                "$chipModelName · ${activeStatusLabel.ifBlank { "Thinking..." }}"
+                                            } else {
+                                                msg.respondingModelLabel ?: chipModelName
+                                            },
                                             style = MaterialTheme.typography.labelSmall,
                                             color = if (msg.isError) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
                                         )
@@ -558,7 +603,7 @@ fun CopilotScreen(
                                             verticalAlignment = Alignment.CenterVertically,
                                             horizontalArrangement = Arrangement.spacedBy(2.dp)
                                         ) {
-                                            if (isLastMessage && canRegenerate && msg.id != "welcome") {
+                                            if (isLastMessage && canRegenerate && msg.id != "welcome" && !msg.isError) {
                                                 TextButton(
                                                     onClick = {
                                                         haptics.tap()
@@ -613,12 +658,66 @@ fun CopilotScreen(
                             }
 
                             if (msg.content.isBlank() && isCurrentlyStreaming) {
-                                Text(
-                                    text = "Synthesizing architecture & diligence...",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier.padding(vertical = 2.dp)
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidth = 2.dp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Text(
+                                            text = activeStatusLabel.ifBlank { "Thinking..." },
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                    if (activeStatusHint.isNotBlank()) {
+                                        Text(
+                                            text = activeStatusHint,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
                             } else {
+                                if (msg.isAssistant && !msg.modelNotice.isNullOrBlank()) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+                                        shape = RoundedCornerShape(10.dp),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+                                        ),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("copilot_model_notice")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Bolt,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                            Text(
+                                                text = msg.modelNotice,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                                            )
+                                        }
+                                    }
+                                }
                                 MarkdownMessageContent(
                                     raw = msg.content,
                                     textColor = if (msg.isAssistant) MaterialTheme.colorScheme.onSurface
@@ -627,6 +726,105 @@ fun CopilotScreen(
                                     codeBg = MaterialTheme.colorScheme.surfaceVariant,
                                     textStyle = MaterialTheme.typography.bodyMedium
                                 )
+                                if (msg.isAssistant && !isCurrentlyStreaming && msg.isError) {
+                                    val isResume = msg.isTimeout && msg.hasPartialTimeoutOutput
+                                    val retryTag = if (msg.isTimeout) {
+                                        "copilot_timeout_action_button"
+                                    } else {
+                                        "copilot_error_retry_button"
+                                    }
+                                    Column(
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                haptics.tap()
+                                                onRetryTimedOut(msg.id)
+                                            },
+                                            enabled = !isLoading,
+                                            shape = RoundedCornerShape(12.dp),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = MaterialTheme.colorScheme.primary,
+                                                contentColor = MaterialTheme.colorScheme.onPrimary
+                                            ),
+                                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(min = 48.dp)
+                                                .testTag(retryTag)
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isResume) Icons.Filled.PlayArrow else Icons.Filled.Refresh,
+                                                contentDescription = if (isResume) {
+                                                    "Resume timed-out AI Sana request without re-typing"
+                                                } else {
+                                                    "Retry failed AI Sana request without re-typing"
+                                                },
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                text = if (isResume) "Resume" else "Retry",
+                                                style = MaterialTheme.typography.labelLarge
+                                            )
+                                        }
+
+                                        if (msg.offerFastFallback && !useFastModel) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    haptics.tap()
+                                                    onSwitchToFastAndRetry(msg.id)
+                                                },
+                                                enabled = !isLoading,
+                                                shape = RoundedCornerShape(12.dp),
+                                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .heightIn(min = 48.dp)
+                                                    .testTag("copilot_switch_fast_button")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Bolt,
+                                                    contentDescription = "Switch to AI Sana Fast mode and retry",
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(
+                                                    text = "Switch to Fast Mode & Retry",
+                                                    style = MaterialTheme.typography.labelLarge
+                                                )
+                                            }
+                                        }
+
+                                        if (msg.offerDefaultAiFallback && customApiKey.isNotBlank()) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    haptics.tap()
+                                                    onSwitchToDefaultAiAndRetry(msg.id)
+                                                },
+                                                enabled = !isLoading,
+                                                shape = RoundedCornerShape(12.dp),
+                                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .heightIn(min = 48.dp)
+                                                    .testTag("copilot_switch_default_ai_button")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.AutoAwesome,
+                                                    contentDescription = "Clear custom key and retry with default AI Sana",
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Spacer(Modifier.width(6.dp))
+                                                Text(
+                                                    text = "Use Default AI & Retry",
+                                                    style = MaterialTheme.typography.labelLarge
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -682,6 +880,57 @@ fun CopilotScreen(
             }
         }
 
+        AnimatedVisibility(
+            visible = isLoading && activeStatusLabel.isNotBlank(),
+            enter = fadeIn(tween(180)) + expandVertically(tween(180)),
+            exit = fadeOut(tween(140)) + shrinkVertically(tween(140))
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.42f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("copilot_status_indicator")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = if (aiStatus.phase == AiRequestPhase.STREAMING) {
+                            EmeraldSuccess
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        }
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = activeStatusLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (activeStatusHint.isNotBlank()) {
+                            Text(
+                                text = activeStatusHint,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // Compact Composer Row (with optional Prototype Image attachment preview)
         Surface(
             color = MaterialTheme.colorScheme.surface,
@@ -709,7 +958,11 @@ fun CopilotScreen(
                                 .clip(RoundedCornerShape(8.dp))
                         )
                         Text(
-                            text = "Prototype photo attached for vision analysis",
+                            text = if (customApiKey.isNotBlank()) {
+                                "Prototype photo attached (uses AI Sana vision)"
+                            } else {
+                                "Prototype photo attached for vision analysis"
+                            },
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             maxLines = 1,
@@ -793,7 +1046,7 @@ fun CopilotScreen(
                                     text = if (focusedInnovation != null) {
                                         "Ask about ${focusedInnovation.title}..."
                                     } else {
-                                        "Ask patent, TAM, BOM, or attach sketch..."
+                                        "Ask anything, share an idea, or attach a sketch..."
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -873,6 +1126,8 @@ fun CopilotScreen(
 
     if (showKeyDialog) {
         var keyInput by remember { mutableStateOf(customApiKey) }
+        val trimmedKey = keyInput.trim()
+        val isKeyFormatValid = trimmedKey.isEmpty() || (trimmedKey.length >= 16 && !trimmedKey.any { it.isWhitespace() })
         AlertDialog(
             onDismissRequest = { showKeyDialog = false },
             title = { Text("AI Model Key Settings") },
@@ -888,6 +1143,10 @@ fun CopilotScreen(
                         onValueChange = { keyInput = it },
                         label = { Text("Optional Key (AIzaSy...)") },
                         singleLine = true,
+                        isError = !isKeyFormatValid,
+                        supportingText = if (!isKeyFormatValid) {
+                            { Text("Enter at least 16 characters with no spaces, or leave empty for default AI.") }
+                        } else null,
                         visualTransformation = PasswordVisualTransformation(),
                         modifier = Modifier.fillMaxWidth().testTag("copilot_api_key_input")
                     )
@@ -895,9 +1154,10 @@ fun CopilotScreen(
             },
             confirmButton = {
                 Button(
+                    enabled = isKeyFormatValid,
                     onClick = {
                         haptics.success()
-                        onSaveApiKey(keyInput)
+                        onSaveApiKey(trimmedKey)
                         showKeyDialog = false
                     }
                 ) {

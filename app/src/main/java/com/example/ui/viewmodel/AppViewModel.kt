@@ -6,6 +6,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.analytics.AnalyticsTracker
 import com.example.analytics.NoOpAnalyticsTracker
+import com.example.data.model.AiFailureCategory
+import com.example.data.model.AiRequestPhase
+import com.example.data.model.AiStatusUiState
 import com.example.data.model.AuthUser
 import com.example.data.model.BackendComment
 import com.example.data.model.BackendInnovation
@@ -14,16 +17,26 @@ import com.example.data.model.CategoryItem
 import com.example.data.model.CopilotMessage
 import com.example.data.model.DashboardStats
 import com.example.data.model.DigitalNdaRecord
+import com.example.data.model.EcosystemMatchResult
 import com.example.data.model.ExactCategories
 import com.example.data.model.NotificationAlert
 import com.example.data.model.PitchDeckResult
+import com.example.data.model.Proposal
+import com.example.data.model.ShareIdeaScope
+import com.example.data.model.TalentProfile
 import com.example.data.model.UiState
+import com.example.data.model.UserProfile
+import com.example.data.model.VerifiedOrganization
 import com.example.data.preferences.NotificationLocalDataStore
 import com.example.data.preferences.ThemePreferences
 import com.example.data.preferences.TokenManager
 import com.example.data.repository.AiCopilotRepository
 import com.example.data.repository.BackendApiException
 import com.example.data.repository.BackendRepository
+import com.example.data.repository.EcosystemMatcher
+import com.example.data.repository.EcosystemRepository
+import com.example.data.repository.IdeaRepository
+import com.example.data.repository.SanaPromptEngine
 import com.example.util.SecurityCryptoUtils
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseUser
@@ -42,6 +55,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.InterruptedIOException
 import java.net.ConnectException
@@ -55,7 +69,9 @@ class AppViewModel(
     private val themePreferences: ThemePreferences,
     private val aiCopilotRepository: AiCopilotRepository = AiCopilotRepository(),
     private val notificationDataStore: NotificationLocalDataStore? = null,
-    private val analyticsTracker: AnalyticsTracker = NoOpAnalyticsTracker
+    private val analyticsTracker: AnalyticsTracker = NoOpAnalyticsTracker,
+    private val ecosystemRepository: EcosystemRepository? = null,
+    private val ideaRepository: IdeaRepository? = null
 ) : ViewModel() {
 
     val isDarkTheme: StateFlow<Boolean> = themePreferences.isDarkTheme
@@ -75,6 +91,9 @@ class AppViewModel(
     private val _currentUser = MutableStateFlow<AuthUser?>(null)
     val currentUser: StateFlow<AuthUser?> = _currentUser.asStateFlow()
 
+    private val _firebaseUid = MutableStateFlow<String?>(runCatching { Firebase.auth.currentUser?.uid }.getOrNull())
+    val firebaseUid: StateFlow<String?> = _firebaseUid.asStateFlow()
+
     private val _showAuthModal = MutableStateFlow(false)
     val showAuthModal: StateFlow<Boolean> = _showAuthModal.asStateFlow()
 
@@ -89,6 +108,9 @@ class AppViewModel(
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    val recentSearches: StateFlow<List<String>> = repository.observeRecentSearches(limit = 10)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
     private val _selectedCategory = MutableStateFlow("All")
     val selectedCategory: StateFlow<String> = _selectedCategory.asStateFlow()
@@ -161,8 +183,98 @@ class AppViewModel(
     private val _signedNdas = MutableStateFlow<Map<String, DigitalNdaRecord>>(emptyMap())
     val signedNdas: StateFlow<Map<String, DigitalNdaRecord>> = _signedNdas.asStateFlow()
 
-    private val _talentsState = MutableStateFlow<UiState<List<BackendTalent>>>(UiState.Loading)
-    val talentsState: StateFlow<UiState<List<BackendTalent>>> = _talentsState.asStateFlow()
+    private val _backendTalentsState = MutableStateFlow<UiState<List<BackendTalent>>>(UiState.Loading)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val firestoreTalents: StateFlow<List<TalentProfile>> = _firebaseUid
+        .flatMapLatest { uid ->
+            if (uid != null && ideaRepository != null) ideaRepository.observeTalents()
+            else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    val talentsState: StateFlow<UiState<List<BackendTalent>>> = combine(
+        _backendTalentsState,
+        firestoreTalents
+    ) { backendState, cloudTalents ->
+        when (backendState) {
+            is UiState.Success -> {
+                val mappedCloud = cloudTalents.map { it.toBackendTalent() }
+                val merged = linkedMapOf<String, BackendTalent>()
+                mappedCloud.forEach { merged[it.id] = it }
+                backendState.data.forEach { if (!merged.containsKey(it.id)) merged[it.id] = it }
+                UiState.Success(merged.values.toList())
+            }
+            is UiState.Error -> {
+                if (cloudTalents.isNotEmpty()) {
+                    UiState.Success(cloudTalents.map { it.toBackendTalent() })
+                } else {
+                    backendState
+                }
+            }
+            UiState.Loading -> {
+                if (cloudTalents.isNotEmpty()) {
+                    UiState.Success(cloudTalents.map { it.toBackendTalent() })
+                } else {
+                    UiState.Loading
+                }
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), UiState.Loading)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val myTalentProfile: StateFlow<TalentProfile?> = _firebaseUid
+        .flatMapLatest { uid ->
+            if (uid != null && ideaRepository != null) ideaRepository.observeMyTalentProfile(uid)
+            else flowOf(null)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val myFirestoreProfile: StateFlow<UserProfile?> = _firebaseUid
+        .flatMapLatest { uid ->
+            if (uid != null && ideaRepository != null) ideaRepository.observeUserProfile(uid)
+            else flowOf(null)
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val incomingFirestoreProposals: StateFlow<List<Proposal>> = _firebaseUid
+        .flatMapLatest { uid ->
+            if (uid != null && ideaRepository != null) ideaRepository.observeIncomingProposals(uid)
+            else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val sentFirestoreProposals: StateFlow<List<Proposal>> = _firebaseUid
+        .flatMapLatest { uid ->
+            if (uid != null && ideaRepository != null) ideaRepository.observeSentProposals(uid)
+            else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val verifiedOrganizations: StateFlow<List<VerifiedOrganization>> = _firebaseUid
+        .flatMapLatest { uid ->
+            ecosystemRepository?.observeCombinedOrganizations(isSignedIn = uid != null)
+                ?: flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val savedOpportunityIds: StateFlow<Set<String>> = _firebaseUid
+        .flatMapLatest { uid ->
+            val eco = ecosystemRepository ?: return@flatMapLatest flowOf(emptySet())
+            if (uid != null) {
+                combine(eco.observeLocalSavedOpportunityIds(), eco.observeCloudSavedOpportunityIds(uid)) { local, cloud ->
+                    local + cloud
+                }
+            } else {
+                eco.observeLocalSavedOpportunityIds()
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptySet())
 
     private val _selectedTalentRole = MutableStateFlow("All")
     val selectedTalentRole: StateFlow<String> = _selectedTalentRole.asStateFlow()
@@ -188,6 +300,9 @@ class AppViewModel(
     private val _isAiLoading = MutableStateFlow(false)
     val isAiLoading: StateFlow<Boolean> = _isAiLoading.asStateFlow()
 
+    private val _aiStatusState = MutableStateFlow(AiStatusUiState())
+    val aiStatusState: StateFlow<AiStatusUiState> = _aiStatusState.asStateFlow()
+
     private val _canRegenerateLastReply = MutableStateFlow(false)
     val canRegenerateLastReply: StateFlow<Boolean> = _canRegenerateLastReply.asStateFlow()
 
@@ -207,6 +322,15 @@ class AppViewModel(
     private var activeStreamMsgId: String? = null
     private var userRequestedAiStop = false
     private var lastPromptPayload: Triple<String, Bitmap?, String>? = null
+    private val timedOutPayloads = mutableMapOf<String, TimedOutPromptPayload>()
+
+    private data class TimedOutPromptPayload(
+        val prompt: String,
+        val attachedImage: Bitmap?,
+        val promptSource: String,
+        val userMessageId: String,
+        val hasPartialOutput: Boolean
+    )
 
     init {
         viewModelScope.launch {
@@ -231,6 +355,7 @@ class AppViewModel(
                         Log.w(TAG, "Deferred profile refresh skipped: ${e.message}")
                         if (_currentUser.value == null) {
                             Firebase.auth.currentUser?.let { fbUser ->
+                                _firebaseUid.value = fbUser.uid
                                 _currentUser.value = fbUser.toAuthUser()
                                 loadDashboardStats()
                             }
@@ -238,6 +363,7 @@ class AppViewModel(
                     }
             } else {
                 Firebase.auth.currentUser?.let { fbUser ->
+                    _firebaseUid.value = fbUser.uid
                     _currentUser.value = fbUser.toAuthUser()
                     loadDashboardStats()
                 }
@@ -387,11 +513,24 @@ class AppViewModel(
     fun onGoogleAuthSuccess(isAutoSignIn: Boolean = false) {
         val fbUser = Firebase.auth.currentUser ?: return
         val authUser = fbUser.toAuthUser()
+        _firebaseUid.value = fbUser.uid
         _currentUser.value = authUser
         _authError.value = null
         _showAuthModal.value = false
         if (!isAutoSignIn) {
             _snackbarMessage.value = "Signed in with Google as ${authUser.name}!"
+        }
+        viewModelScope.launch {
+            runCatching {
+                ideaRepository?.ensureUserAndSeedCatalog(
+                    displayName = fbUser.displayName,
+                    email = fbUser.email,
+                    photoUrl = fbUser.photoUrl?.toString()
+                )
+            }.onFailure { e ->
+                if (e is CancellationException) throw e
+                Log.w(TAG, "Firestore user bootstrap skipped/deferred: ${e.message}")
+            }
         }
         loadDashboardStats()
     }
@@ -399,6 +538,7 @@ class AppViewModel(
     fun logout() {
         repository.signOut()
         runCatching { Firebase.auth.signOut() }
+        _firebaseUid.value = null
         _currentUser.value = null
         _dashboardState.value = UiState.Success(DashboardStats())
         _snackbarMessage.value = "Signed out."
@@ -450,6 +590,42 @@ class AppViewModel(
                 )
             }
             loadInnovations()
+            if (clean.length >= 2) {
+                delay(900L)
+                repository.recordMarketplaceSearch(clean)
+            }
+        }
+    }
+
+    fun submitSearchQuery(query: String = _searchQuery.value) {
+        val clean = query.trim()
+        _searchQuery.value = query
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            if (clean.isNotEmpty()) {
+                analyticsTracker.logMarketplaceSearch(
+                    queryPreview = clean,
+                    queryLength = clean.length
+                )
+                repository.recordMarketplaceSearch(clean)
+            }
+            loadInnovations()
+        }
+    }
+
+    fun selectRecentSearch(query: String) {
+        submitSearchQuery(query)
+    }
+
+    fun deleteRecentSearch(query: String) {
+        viewModelScope.launch {
+            repository.deleteRecentSearch(query)
+        }
+    }
+
+    fun clearRecentSearches() {
+        viewModelScope.launch {
+            repository.clearRecentSearches()
         }
     }
 
@@ -507,6 +683,12 @@ class AppViewModel(
         _selectedDetail.value = item
         _focusedInnovation.value = item
         _pitchDeckState.value = null
+        val activeQuery = _searchQuery.value.trim()
+        if (source == "marketplace" && activeQuery.isNotBlank()) {
+            viewModelScope.launch {
+                repository.recordMarketplaceSearch(activeQuery)
+            }
+        }
         analyticsTracker.logInnovationSelected(
             innovationId = item.id,
             title = item.title,
@@ -818,17 +1000,240 @@ class AppViewModel(
     fun loadTalents() {
         talentsJob?.cancel()
         talentsJob = viewModelScope.launch {
-            _talentsState.value = UiState.Loading
+            _backendTalentsState.value = UiState.Loading
             try {
                 val talents = repository.fetchTalents()
-                _talentsState.value = UiState.Success(talents)
+                _backendTalentsState.value = UiState.Success(talents)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Unable to load talents: ${e.message}")
-                _talentsState.value = UiState.Error(
+                _backendTalentsState.value = UiState.Error(
                     friendlyErrorMessage(e, "Failed to load builders & partners directory.")
                 )
+            }
+        }
+    }
+
+    // --- Step 4, 5, 6, 7: Directory, Matching, Connections & Funding ---
+
+    fun importVerifiedDirectoryJson(rawJson: String): Result<Int> {
+        val eco = ecosystemRepository
+            ?: return Result.failure(IllegalStateException("Directory repository unavailable."))
+        val result = eco.importVerifiedJson(rawJson)
+        result.onSuccess { count ->
+            _snackbarMessage.value = "Loaded $count source-verified organization record(s)."
+        }
+        return result
+    }
+
+    fun clearImportedDirectory() {
+        ecosystemRepository?.clearImportedOrganizations()
+        _snackbarMessage.value = "Cleared locally imported directory records."
+    }
+
+    fun toggleSaveOpportunity(organization: VerifiedOrganization) {
+        val eco = ecosystemRepository ?: return
+        val currentlySaved = savedOpportunityIds.value.contains(organization.id)
+        viewModelScope.launch {
+            runCatching {
+                eco.toggleSavedOpportunity(organization, currentlySaved)
+            }.onSuccess {
+                _snackbarMessage.value = if (currentlySaved) {
+                    "Removed \"${organization.name}\" from saved opportunities."
+                } else {
+                    "Saved \"${organization.name}\" to your opportunities."
+                }
+            }.onFailure { e ->
+                if (e is CancellationException) throw e
+                _snackbarMessage.value = e.localizedMessage ?: "Unable to update saved opportunity."
+            }
+        }
+    }
+
+    fun computeEcosystemMatches(
+        ideaTitle: String,
+        ideaDescription: String,
+        ideaCategory: String,
+        ideaStage: String = "",
+        preferredLocation: String = ""
+    ): List<EcosystemMatchResult> {
+        val talents = (talentsState.value as? UiState.Success)?.data.orEmpty()
+        return EcosystemMatcher.matchIdeaToEcosystem(
+            ideaTitle = ideaTitle,
+            ideaDescription = ideaDescription,
+            ideaCategory = ideaCategory,
+            ideaStage = ideaStage,
+            preferredLocation = preferredLocation,
+            organizations = verifiedOrganizations.value,
+            talents = talents
+        )
+    }
+
+    fun toggleTalentVisibility(isPublic: Boolean) {
+        if (Firebase.auth.currentUser == null || ideaRepository == null) {
+            _snackbarMessage.value = "Sign in with Google to control your public Firestore profile visibility."
+            openAuthModal()
+            return
+        }
+        viewModelScope.launch {
+            _isActionBusy.value = true
+            try {
+                ideaRepository.updateTalentVisibility(isPublic)
+                _snackbarMessage.value = if (isPublic) {
+                    "Your profile is now discoverable in Collaborators & Builders."
+                } else {
+                    "Your profile is now hidden from public talent discovery."
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _snackbarMessage.value = e.localizedMessage ?: "Failed to update profile visibility."
+            } finally {
+                _isActionBusy.value = false
+            }
+        }
+    }
+
+    fun saveMyTalentProfile(
+        name: String,
+        role: String,
+        headline: String,
+        bio: String,
+        skills: List<String>,
+        location: String,
+        isPublic: Boolean,
+        onDone: () -> Unit = {}
+    ) {
+        if (Firebase.auth.currentUser == null || ideaRepository == null) {
+            _snackbarMessage.value = "Sign in with Google to update your public collaborator profile."
+            openAuthModal()
+            return
+        }
+        viewModelScope.launch {
+            _isActionBusy.value = true
+            try {
+                val count = (dashboardState.value as? UiState.Success)?.data?.innovationsPosted?.toLong() ?: 0L
+                ideaRepository.updateUserProfile(
+                    name = name,
+                    role = role,
+                    headline = headline,
+                    bio = bio,
+                    skills = skills,
+                    location = location,
+                    existingProjectsCount = count,
+                    isPublic = isPublic
+                )
+                _snackbarMessage.value = "Collaborator profile saved."
+                onDone()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _snackbarMessage.value = e.localizedMessage ?: "Failed to save profile."
+            } finally {
+                _isActionBusy.value = false
+            }
+        }
+    }
+
+    fun sendCollaborationProposal(
+        recipientTalent: BackendTalent,
+        innovation: BackendInnovation?,
+        proposalType: String,
+        amount: String,
+        message: String,
+        contactInfo: String,
+        shareScope: ShareIdeaScope,
+        customProblemSummary: String = "",
+        onSuccess: () -> Unit
+    ) {
+        if (!isUserSignedIn()) {
+            _snackbarMessage.value = "Sign in to send a collaboration proposal."
+            openAuthModal()
+            return
+        }
+        val currentFbUid = Firebase.auth.currentUser?.uid
+        val controlledSummary = if (innovation != null) {
+            EcosystemMatcher.buildControlledShareSummary(
+                ideaTitle = innovation.title,
+                ideaCategory = innovation.category,
+                ideaStage = innovation.stage,
+                ideaDescription = innovation.description,
+                scope = shareScope,
+                customProblemSummary = customProblemSummary
+            )
+        } else null
+
+        val sharedInnovationId = if (shareScope == ShareIdeaScope.NONE) null else innovation?.id
+        val sharedTitle = when {
+            shareScope == ShareIdeaScope.NONE || innovation == null -> "Direct $proposalType Intro"
+            else -> innovation.title
+        }
+
+        viewModelScope.launch {
+            _isActionBusy.value = true
+            try {
+                if (currentFbUid != null && ideaRepository != null && recipientTalent.id != currentFbUid) {
+                    ideaRepository.submitCollaborationProposal(
+                        recipientId = recipientTalent.id,
+                        recipientName = recipientTalent.name,
+                        innovationId = sharedInnovationId,
+                        innovationTitle = sharedTitle,
+                        proposalType = proposalType,
+                        amount = amount,
+                        message = message,
+                        contactInfo = contactInfo,
+                        sharedIdeaScope = shareScope,
+                        sharedIdeaSummary = controlledSummary,
+                        senderProfile = myFirestoreProfile.value
+                    )
+                    _snackbarMessage.value = "Proposal sent to ${recipientTalent.name}!"
+                    onSuccess()
+                } else if (repository.hasSavedToken() && sharedInnovationId != null) {
+                    val composedMsg = buildString {
+                        append("To ${recipientTalent.name}: $message")
+                        if (!controlledSummary.isNullOrBlank()) {
+                            append("\n\n$controlledSummary")
+                        }
+                    }
+                    repository.submitProposal(sharedInnovationId, proposalType, amount, composedMsg, contactInfo)
+                    _snackbarMessage.value = "Proposal sent to ${recipientTalent.name}!"
+                    loadDashboardStats()
+                    onSuccess()
+                } else if (currentFbUid == null) {
+                    _snackbarMessage.value = "Sign in with Google to send direct collaboration proposals."
+                    openAuthModal()
+                } else {
+                    _snackbarMessage.value = "You cannot send a proposal to your own profile."
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _snackbarMessage.value = e.localizedMessage
+                    ?: "Could not deliver proposal. Target profile may not yet be synced on Firestore."
+            } finally {
+                _isActionBusy.value = false
+            }
+        }
+    }
+
+    fun respondToProposal(proposalId: String, accept: Boolean) {
+        if (Firebase.auth.currentUser == null || ideaRepository == null) {
+            _snackbarMessage.value = "Sign in with Google to respond to proposals."
+            openAuthModal()
+            return
+        }
+        viewModelScope.launch {
+            _isActionBusy.value = true
+            try {
+                ideaRepository.updateProposalStatus(proposalId, if (accept) "ACCEPTED" else "DECLINED")
+                _snackbarMessage.value = if (accept) "Proposal accepted." else "Proposal declined."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _snackbarMessage.value = e.localizedMessage ?: "Unable to update proposal status."
+            } finally {
+                _isActionBusy.value = false
             }
         }
     }
@@ -946,6 +1351,7 @@ class AppViewModel(
 
         val targetInnovation = _focusedInnovation.value ?: _selectedDetail.value
         val catalogSnapshot = if (targetInnovation == null) availableInnovations.value.take(6) else emptyList()
+        val talentSnapshot = (talentsState.value as? UiState.Success)?.data.orEmpty().take(8)
         val userKey = _customApiKey.value.takeIf { it.isNotBlank() }
         val modelTier = when {
             userKey != null && attachedImage == null -> "custom_key"
@@ -962,21 +1368,79 @@ class AppViewModel(
             surface = if (isPopup) "floating_popup" else "full_screen"
         )
 
+        val directoryLines = verifiedOrganizations.value
+            .take(15)
+            .map { it.toDirectorySummaryLine() }
+
+        val isCustomRoute = userKey != null && attachedImage == null
+        val requestStartMs = System.currentTimeMillis()
+        val activePhase = MutableStateFlow(AiRequestPhase.CHECKING_CONNECTION)
+
+        fun updateAiStatus(phase: AiRequestPhase) {
+            activePhase.value = phase
+            val elapsedMs = System.currentTimeMillis() - requestStartMs
+            _aiStatusState.value = AiStatusUiState(
+                phase = phase,
+                label = SanaPromptEngine.resolveStatusLabel(
+                    phase = phase,
+                    elapsedMs = elapsedMs,
+                    hasAttachedImage = attachedImage != null,
+                    isCustomKey = isCustomRoute
+                ),
+                hint = SanaPromptEngine.resolveStatusHint(
+                    phase = phase,
+                    elapsedMs = elapsedMs,
+                    isFastMode = _useFastAiModel.value
+                )
+            )
+        }
+
+        updateAiStatus(AiRequestPhase.CHECKING_CONNECTION)
+
+        var resolvedModelLabel = when {
+            isCustomRoute -> "Custom AI Backend"
+            _useFastAiModel.value -> "AI Sana Fast (gemini-3.5-flash-lite)"
+            else -> "AI Sana Deep (gemini-3.8-flash)"
+        }
+        var resolvedModelNotice: String? = null
+
         aiStreamJob = viewModelScope.launch {
             var responseLength = 0
+            val statusTickerJob = launch {
+                while (isActive) {
+                    delay(1000L)
+                    updateAiStatus(activePhase.value)
+                }
+            }
             try {
-                if (userKey != null && attachedImage == null) {
-                    val contextSummary = targetInnovation?.let {
-                        "Innovation: ${it.title} | Category: ${it.category} | Stage: ${it.stage} | Description: ${it.description}"
-                    }.orEmpty()
+                if (isCustomRoute) {
+                    val contextPayload = SanaPromptEngine.buildCustomKeyContextString(
+                        prompt = trimmed,
+                        history = priorHistory,
+                        activeInnovation = targetInnovation,
+                        catalogContext = catalogSnapshot,
+                        talentContext = talentSnapshot,
+                        directorySummaryLines = directoryLines,
+                        isFastMode = _useFastAiModel.value
+                    )
+                    updateAiStatus(AiRequestPhase.THINKING)
                     val reply = repository.sendAiChat(
                         prompt = trimmed,
-                        context = contextSummary,
-                        customApiKey = userKey
+                        context = contextPayload,
+                        customApiKey = userKey!!,
+                        useFastModel = _useFastAiModel.value
                     )
+                    updateAiStatus(AiRequestPhase.STREAMING)
                     responseLength = reply.length
                     _copilotMessages.update { msgs ->
-                        msgs.map { if (it.id == streamMsgId) it.copy(content = reply) else it }
+                        msgs.map {
+                            if (it.id == streamMsgId) {
+                                it.copy(
+                                    content = reply,
+                                    respondingModelLabel = resolvedModelLabel
+                                )
+                            } else it
+                        }
                     }
                 } else {
                     aiCopilotRepository.streamBackendCopilotReply(
@@ -985,16 +1449,56 @@ class AppViewModel(
                         activeInnovation = targetInnovation,
                         attachedImage = attachedImage,
                         useFastModel = _useFastAiModel.value,
-                        catalogContext = catalogSnapshot
+                        catalogContext = catalogSnapshot,
+                        talentContext = talentSnapshot,
+                        directorySummaryLines = directoryLines,
+                        onPhaseChange = { phase -> updateAiStatus(phase) },
+                        onModelResolved = { route, modelName, switchedFromModel, fallbackReason ->
+                            val isFastResolved = route == "fast_flash_lite"
+                            resolvedModelLabel = if (isFastResolved) {
+                                "AI Sana Fast ($modelName)"
+                            } else {
+                                "AI Sana Deep ($modelName)"
+                            }
+                            if (switchedFromModel != null) {
+                                _useFastAiModel.value = true
+                                val reasonLabel = when (fallbackReason) {
+                                    AiFailureCategory.MODEL_UNAVAILABLE -> "Deep mode was unavailable"
+                                    AiFailureCategory.QUOTA_OR_RATE_LIMIT -> "Deep mode hit a rate/quota limit"
+                                    AiFailureCategory.TIMEOUT -> "Deep mode timed out before responding"
+                                    else -> "Deep mode hit temporary provider overload"
+                                }
+                                resolvedModelNotice = "Switched from $switchedFromModel to AI Sana Fast ($modelName) ($reasonLabel)."
+                                _snackbarMessage.value = "Switched to AI Sana Fast ($modelName)."
+                            }
+                            _copilotMessages.update { msgs ->
+                                msgs.map {
+                                    if (it.id == streamMsgId) {
+                                        it.copy(
+                                            respondingModelLabel = resolvedModelLabel,
+                                            modelNotice = resolvedModelNotice
+                                        )
+                                    } else it
+                                }
+                            }
+                        }
                     ).collect { partial ->
                         responseLength = partial.length
                         _copilotMessages.update { msgs ->
-                            msgs.map { if (it.id == streamMsgId) it.copy(content = partial) else it }
+                            msgs.map {
+                                if (it.id == streamMsgId) {
+                                    it.copy(
+                                        content = partial,
+                                        respondingModelLabel = resolvedModelLabel,
+                                        modelNotice = resolvedModelNotice
+                                    )
+                                } else it
+                            }
                         }
                     }
                 }
                 analyticsTracker.logCopilotResponseCompleted(
-                    modelTier = modelTier,
+                    modelTier = if (resolvedModelNotice != null) "fast_flash_lite_fallback" else modelTier,
                     success = true,
                     responseLength = responseLength
                 )
@@ -1008,25 +1512,89 @@ class AppViewModel(
                                 } else {
                                     "${it.content.trimEnd()}\n\n*(Generation stopped)*"
                                 }
-                                it.copy(content = updated)
+                                it.copy(
+                                    content = updated,
+                                    respondingModelLabel = resolvedModelLabel,
+                                    modelNotice = resolvedModelNotice
+                                )
                             } else it
                         }
                     }
                 }
                 throw e
             } catch (e: Exception) {
-                Log.e(TAG, "AI Sana generation error", e)
+                val category = SanaPromptEngine.classifyAiError(e)
+                val httpCode = (e as? BackendApiException)?.code
+                val diag = e as? com.example.data.repository.AiCopilotDiagnosticException
+                val safeCause = SanaPromptEngine.redactSensitiveInfo(e.message.orEmpty()).take(160)
+                Log.e(
+                    TAG,
+                    "AI Sana failure [tier=$modelTier, category=$category, code=$httpCode, phase=${diag?.phase ?: "request"}, appCheck=${diag?.appCheckStatus ?: "n/a"}, fallbackAttempted=${diag?.fallbackAttempted ?: false}, class=${e.javaClass.simpleName}, detail=$safeCause]"
+                )
                 analyticsTracker.logCopilotResponseCompleted(
                     modelTier = modelTier,
                     success = false,
                     responseLength = responseLength
                 )
-                val errorText = "### AI Request Error\n- ${e.localizedMessage ?: "Unable to complete AI Sana request."}\n- Check network connectivity or tap **Regenerate** to retry."
+                val isTimeout = category == AiFailureCategory.TIMEOUT
+                val diagnosed = SanaPromptEngine.diagnoseAiError(e, modelTier)
+                val partialPrefix = diag
+                    ?.partialContent
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                val hasPartialOutput = partialPrefix != null
+                timedOutPayloads[streamMsgId] = TimedOutPromptPayload(
+                    prompt = trimmed,
+                    attachedImage = attachedImage,
+                    promptSource = promptSource,
+                    userMessageId = userMsg.id,
+                    hasPartialOutput = hasPartialOutput
+                )
+                val offerFast = !isCustomRoute &&
+                    !_useFastAiModel.value &&
+                    !hasPartialOutput &&
+                    diag?.fallbackAttempted != true &&
+                    category in setOf(
+                        AiFailureCategory.PROVIDER_OVERLOAD,
+                        AiFailureCategory.TIMEOUT,
+                        AiFailureCategory.QUOTA_OR_RATE_LIMIT,
+                        AiFailureCategory.MODEL_UNAVAILABLE
+                    )
+                val offerDefault = isCustomRoute
+                val actionHint = when {
+                    isTimeout && hasPartialOutput -> "Tap **Resume** below to re-trigger your request without re-typing."
+                    isTimeout -> "Tap **Retry** below to re-trigger your request without re-typing."
+                    offerDefault -> "Tap **Use Default AI** or **Retry** below, or verify your key in Key Settings."
+                    offerFast -> "Tap **Switch to Fast Mode** or **Retry** below."
+                    else -> "Tap **Retry** below or adjust model/key settings."
+                }
+                val errorText = if (partialPrefix != null) {
+                    "$partialPrefix\n\n---\n### AI Sana Error\n- $diagnosed\n- $actionHint"
+                } else {
+                    "### AI Sana Error\n- $diagnosed\n- $actionHint"
+                }
                 _copilotMessages.update { msgs ->
-                    msgs.map { if (it.id == streamMsgId) it.copy(content = errorText, isError = true) else it }
+                    msgs.map {
+                        if (it.id == streamMsgId) {
+                            it.copy(
+                                content = errorText,
+                                isError = true,
+                                isTimeout = isTimeout,
+                                hasPartialTimeoutOutput = hasPartialOutput,
+                                respondingModelLabel = resolvedModelLabel,
+                                modelNotice = resolvedModelNotice,
+                                offerFastFallback = offerFast,
+                                offerDefaultAiFallback = offerDefault
+                            )
+                        } else {
+                            it
+                        }
+                    }
                 }
             } finally {
+                statusTickerJob.cancel()
                 _isAiLoading.value = false
+                _aiStatusState.value = AiStatusUiState()
                 _canRegenerateLastReply.value = lastPromptPayload != null
                 if (activeStreamMsgId == streamMsgId) {
                     activeStreamMsgId = null
@@ -1040,7 +1608,68 @@ class AppViewModel(
         userRequestedAiStop = true
         aiStreamJob?.cancel()
         _isAiLoading.value = false
+        _aiStatusState.value = AiStatusUiState()
         _canRegenerateLastReply.value = lastPromptPayload != null
+    }
+
+    fun switchToFastAndRetry(messageId: String, isPopup: Boolean = false) {
+        if (_isAiLoading.value) return
+        setFastAiModel(true, surface = if (isPopup) "floating_popup_fallback" else "full_screen_fallback")
+        retryTimedOutCopilotMessage(messageId, isPopup = isPopup)
+    }
+
+    fun switchToDefaultAiAndRetry(messageId: String, isPopup: Boolean = false) {
+        if (_isAiLoading.value) return
+        saveCustomApiKey("")
+        retryTimedOutCopilotMessage(messageId, isPopup = isPopup)
+    }
+
+    fun retryTimedOutCopilotMessage(messageId: String, isPopup: Boolean = false) {
+        if (_isAiLoading.value) return
+        val payload = timedOutPayloads.remove(messageId)
+        val prompt: String
+        val bitmap: Bitmap?
+        val userMessageId: String?
+        val retrySource: String
+        if (payload != null) {
+            prompt = payload.prompt
+            bitmap = payload.attachedImage
+            userMessageId = payload.userMessageId
+            retrySource = if (payload.hasPartialOutput) "timeout_resume" else "timeout_retry"
+        } else {
+            val fallback = lastPromptPayload ?: return
+            prompt = fallback.first
+            bitmap = fallback.second
+            userMessageId = null
+            retrySource = "timeout_retry"
+        }
+
+        _copilotMessages.update { current ->
+            val updated = current.toMutableList()
+            val errIdx = updated.indexOfFirst { it.id == messageId }
+            if (errIdx >= 0) {
+                val isLastTurn = errIdx == updated.lastIndex
+                updated.removeAt(errIdx)
+                if (isLastTurn) {
+                    val prevUserIdx = if (userMessageId != null) {
+                        updated.indexOfLast { it.id == userMessageId && !it.isAssistant }
+                    } else {
+                        if (updated.lastOrNull()?.isAssistant == false) updated.lastIndex else -1
+                    }
+                    if (prevUserIdx >= 0 && prevUserIdx == updated.lastIndex) {
+                        updated.removeAt(prevUserIdx)
+                    }
+                }
+            }
+            updated
+        }
+
+        sendCopilotPrompt(
+            prompt = prompt,
+            attachedImage = bitmap,
+            promptSource = retrySource,
+            isPopup = isPopup
+        )
     }
 
     fun regenerateLastCopilotReply(isPopup: Boolean = false) {
@@ -1048,7 +1677,9 @@ class AppViewModel(
         if (_isAiLoading.value) return
         _copilotMessages.update { current ->
             val trimmedList = current.toMutableList()
-            if (trimmedList.lastOrNull()?.isAssistant == true && trimmedList.lastOrNull()?.id != "welcome") {
+            val lastErrId = trimmedList.lastOrNull()?.id
+            if (trimmedList.lastOrNull()?.isAssistant == true && lastErrId != "welcome") {
+                if (lastErrId != null) timedOutPayloads.remove(lastErrId)
                 trimmedList.removeAt(trimmedList.lastIndex)
             }
             if (trimmedList.lastOrNull()?.isAssistant == false) {
@@ -1068,7 +1699,9 @@ class AppViewModel(
         userRequestedAiStop = false
         aiStreamJob?.cancel()
         _isAiLoading.value = false
+        _aiStatusState.value = AiStatusUiState()
         lastPromptPayload = null
+        timedOutPayloads.clear()
         _canRegenerateLastReply.value = false
         analyticsTracker.logCopilotChatReset()
         _copilotMessages.value = listOf(createWelcomeMessage())
@@ -1079,9 +1712,9 @@ class AppViewModel(
             id = "welcome",
             isAssistant = true,
             content = "### Meet AI Sana\n" +
-                "Senior technical, IP, and venture architect with multi-turn memory, prototype vision, and live Marketplace awareness.\n\n" +
-                "- **Code & Architecture:** Hardware BOMs, firmware stacks, schemas, and MVP blueprints.\n" +
-                "- **Diligence & Strategy:** Prior-art risks, bottom-up TAM/SAM/SOM, and concrete next steps.",
+                "Your conversational assistant and startup/idea advisor inside IDEA2IMPACT. Ask any question, share an idea for honest feedback, or attach a prototype image.\n\n" +
+                "- **Idea Feedback & Validation:** Strengths, risks, open questions, practical tests, and an early 1–10 assessment.\n" +
+                "- **Technical & Venture Advice:** Architecture planning, IP considerations, or browsing verified organizations and collaborators.",
             timestamp = SecurityCryptoUtils.formatTime()
         )
     }
@@ -1092,6 +1725,26 @@ class AppViewModel(
         is UnknownHostException, is ConnectException ->
             "Unable to reach the IDEA2IMPACT server. Check your internet connection and tap Retry."
         else -> e.localizedMessage?.takeIf { it.isNotBlank() } ?: fallback
+    }
+
+    private fun TalentProfile.toBackendTalent(): BackendTalent {
+        val roleCat = when (role) {
+            "Creator" -> "Creators"
+            "Investor" -> "Investors"
+            "Patent Professional" -> "Patent Professionals"
+            else -> "Builders"
+        }
+        return BackendTalent(
+            id = userId.ifBlank { id },
+            name = name,
+            role = role,
+            roleCategory = roleCat,
+            headline = headline,
+            skills = skills,
+            location = location.ifBlank { "India" },
+            avatarUrl = avatarUrl,
+            verified = projectsCount > 0
+        )
     }
 
     private companion object {

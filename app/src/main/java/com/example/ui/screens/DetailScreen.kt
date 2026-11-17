@@ -30,6 +30,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Handshake
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Verified
@@ -98,7 +99,8 @@ fun DetailScreen(
     onSignNda: (signerName: String, signerOrg: String) -> Unit,
     onGeneratePitchDeck: () -> Unit,
     onDismissPitchDeck: () -> Unit,
-    onAnalyzeWithCopilot: () -> Unit = {}
+    onAnalyzeWithCopilot: () -> Unit = {},
+    onFindMatches: () -> Unit = {}
 ) {
     var commentText by remember { mutableStateOf("") }
     var showProposalModal by remember { mutableStateOf(false) }
@@ -454,6 +456,18 @@ fun DetailScreen(
                         Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Analyze with AI Sana")
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            haptics.tap()
+                            onFindMatches()
+                        },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("detail_find_matches_button")
+                    ) {
+                        Icon(Icons.Filled.Hub, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Find Ecosystem & Talent Matches")
                     }
                 }
             }

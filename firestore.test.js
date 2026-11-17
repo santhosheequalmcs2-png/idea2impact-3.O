@@ -321,3 +321,137 @@ test("Proposals: sender creates PENDING, recipient reads and accepts/declines, t
     })
   );
 });
+
+test("VerifiedOrganizations: admin-only writes, signed-in reads of VERIFIED/NEEDS_REVIEW, UNVERIFIED hidden", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+
+  const orgPayload = (status = "VERIFIED") => ({
+    name: "Example BioIncubator",
+    organizationType: "Incubator",
+    sector: "Biotech",
+    description: "Publicly listed biotech incubator cohort.",
+    location: "Bengaluru, Karnataka, India",
+    stageOrFocus: "Pre-seed & Lab Prototyping",
+    website: "https://example.org",
+    publicContactChannel: "https://example.org/apply",
+    publicOpportunities: ["Ignition Grant Window"],
+    eligibility: "Early-stage biotech startups registered in India",
+    geography: "India",
+    deadline: "2026-12-31",
+    sourceName: "Official Program Portal",
+    sourceUrl: "https://example.org/program",
+    verificationStatus: status,
+    lastVerifiedAt: "2026-11-16",
+    updatedAt: serverTimestamp(),
+  });
+
+  // Non-admin Bob cannot create or delete verified_organizations
+  await assertFails(bobDb.collection("verified_organizations").doc("org_1").set(orgPayload("VERIFIED")));
+
+  // Seed admin marker + org docs via rules-bypassed admin context
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    const adminBypass = ctx.firestore();
+    await adminBypass.collection("admins").doc(ALICE_UID).set({ role: "admin" });
+    await adminBypass.collection("verified_organizations").doc("org_hidden").set(orgPayload("UNVERIFIED"));
+  });
+
+  // Admin Alice can write verified organization
+  await assertSucceeds(aliceDb.collection("verified_organizations").doc("org_1").set(orgPayload("VERIFIED")));
+
+  // Signed-in Bob can read VERIFIED doc & query aligned status, cannot read UNVERIFIED doc, unauth denied
+  await assertSucceeds(bobDb.collection("verified_organizations").doc("org_1").get());
+  await assertSucceeds(
+    bobDb.collection("verified_organizations").where("verificationStatus", "in", ["VERIFIED", "NEEDS_REVIEW"]).get()
+  );
+  await assertFails(bobDb.collection("verified_organizations").doc("org_hidden").get());
+  await assertFails(unauthDb.collection("verified_organizations").doc("org_1").get());
+});
+
+test("SavedOpportunities: owner create/read/delete, update & cross-user denied", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  const savedRef = aliceDb.collection("users").doc(ALICE_UID).collection("saved_opportunities").doc("org_1");
+  await assertSucceeds(
+    savedRef.set({
+      userId: ALICE_UID,
+      organizationId: "org_1",
+      organizationName: "Example BioIncubator",
+      organizationType: "Incubator",
+      sector: "Biotech",
+      sourceUrl: "https://example.org/program",
+      lastVerifiedAt: "2026-11-16",
+      createdAt: serverTimestamp(),
+    })
+  );
+
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("saved_opportunities").get());
+  await assertFails(savedRef.update({ sector: "FinTech" }));
+  await assertSucceeds(savedRef.delete());
+});
+
+test("Talents visibility & Direct Connection Proposals: private toggle & innovationId='none' gating", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+
+  await assertSucceeds(
+    aliceDb.collection("talents").doc(ALICE_UID).set({
+      userId: ALICE_UID,
+      name: "Alice Innovator",
+      role: "Creator",
+      headline: "Hardware Founder",
+      bio: "Bio text",
+      skills: ["IoT"],
+      location: "Bengaluru, India",
+      projectsCount: 1,
+      isPublic: false,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+  );
+
+  // Private talent doc is hidden from Bob, readable & toggleable by owner Alice
+  await assertFails(bobDb.collection("talents").doc(ALICE_UID).get());
+  await assertSucceeds(aliceDb.collection("talents").doc(ALICE_UID).get());
+  await assertSucceeds(
+    aliceDb.collection("talents").doc(ALICE_UID).update({
+      isPublic: true,
+      updatedAt: serverTimestamp(),
+    })
+  );
+  await assertSucceeds(bobDb.collection("talents").doc(ALICE_UID).get());
+
+  // Direct collaboration proposal (innovationId = "none") succeeds to Alice's talent profile
+  const directProp = {
+    senderId: BOB_UID,
+    senderName: "Bob Builder",
+    recipientId: ALICE_UID,
+    recipientName: "Alice Innovator",
+    innovationId: "none",
+    innovationTitle: "Direct Mentorship & Co-founder Intro",
+    proposalType: "Mentorship",
+    message: "Happy to collaborate on hardware validation without sharing IP yet.",
+    sharedIdeaScope: "NONE",
+    status: "PENDING",
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+  await assertSucceeds(bobDb.collection("proposals").doc("prop_direct").set(directProp));
+
+  // Self-proposal or proposal to nonexistent talent is rejected
+  await assertFails(
+    bobDb.collection("proposals").doc("prop_self").set({
+      ...directProp,
+      recipientId: BOB_UID,
+    })
+  );
+  await assertFails(
+    bobDb.collection("proposals").doc("prop_ghost").set({
+      ...directProp,
+      recipientId: "unknown_user_999",
+    })
+  );
+});
+

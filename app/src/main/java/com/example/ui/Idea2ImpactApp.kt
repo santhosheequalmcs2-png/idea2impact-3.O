@@ -105,6 +105,8 @@ import com.example.data.preferences.NotificationLocalDataStore
 import com.example.data.preferences.ThemePreferences
 import com.example.data.preferences.TokenManager
 import com.example.data.repository.BackendRepository
+import com.example.data.repository.EcosystemRepository
+import com.example.data.repository.IdeaRepository
 import com.example.ui.auth.attemptAutoSignIn
 import com.example.ui.auth.signOutWithCredentialClear
 import com.example.ui.components.BackendAuthModal
@@ -118,6 +120,7 @@ import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.DetailScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.MarketplaceScreen
+import com.example.ui.screens.MatchesScreen
 import com.example.ui.screens.OnboardingScreen
 import com.example.ui.screens.PricingScreen
 import com.example.ui.screens.TalentScreen
@@ -137,6 +140,7 @@ sealed interface AppRoute {
     @Serializable data object Dashboard : AppRoute
     @Serializable data object Detail : AppRoute
     @Serializable data object Pricing : AppRoute
+    @Serializable data object Matches : AppRoute
 }
 
 private data class BottomTab(
@@ -156,7 +160,7 @@ private fun routeOrder(route: String?): Int {
         name.contains("Copilot") -> 2
         name.contains("Talents") -> 3
         name.contains("Dashboard") -> 4
-        name.contains("Detail") || name.contains("Pricing") -> 5
+        name.contains("Detail") || name.contains("Pricing") || name.contains("Matches") -> 5
         else -> 0
     }
 }
@@ -176,16 +180,21 @@ fun Idea2ImpactApp() {
                 val tokenManager = TokenManager(app)
                 val themePreferences = ThemePreferences(app)
                 val notificationDataStore = NotificationLocalDataStore(app)
+                val ecosystemRepository = runCatching { EcosystemRepository(app) }.getOrNull()
+                val ideaRepository = runCatching { IdeaRepository(app) }.getOrNull()
                 val repository = BackendRepository(
                     tokenManager = tokenManager,
-                    innovationDao = database.innovationDao()
+                    innovationDao = database.innovationDao(),
+                    searchHistoryDao = database.searchHistoryDao()
                 )
                 AppViewModel(
                     repository = repository,
                     tokenManager = tokenManager,
                     themePreferences = themePreferences,
                     notificationDataStore = notificationDataStore,
-                    analyticsTracker = analyticsTracker
+                    analyticsTracker = analyticsTracker,
+                    ecosystemRepository = ecosystemRepository,
+                    ideaRepository = ideaRepository
                 )
             }
         }
@@ -206,6 +215,7 @@ fun Idea2ImpactApp() {
     val isSyncingInnovations by viewModel.isSyncingInnovations.collectAsStateWithLifecycle()
     val isShowingOfflineCache by viewModel.isShowingOfflineCache.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
+    val recentSearches by viewModel.recentSearches.collectAsStateWithLifecycle()
     val selectedCategory by viewModel.selectedCategory.collectAsStateWithLifecycle()
     val selectedStage by viewModel.selectedStage.collectAsStateWithLifecycle()
     val selectedSort by viewModel.selectedSort.collectAsStateWithLifecycle()
@@ -217,6 +227,12 @@ fun Idea2ImpactApp() {
 
     val talentsState by viewModel.talentsState.collectAsStateWithLifecycle()
     val selectedTalentRole by viewModel.selectedTalentRole.collectAsStateWithLifecycle()
+    val myTalentProfile by viewModel.myTalentProfile.collectAsStateWithLifecycle()
+    val verifiedOrganizations by viewModel.verifiedOrganizations.collectAsStateWithLifecycle()
+    val savedOpportunityIds by viewModel.savedOpportunityIds.collectAsStateWithLifecycle()
+    val incomingFirestoreProposals by viewModel.incomingFirestoreProposals.collectAsStateWithLifecycle()
+    val sentFirestoreProposals by viewModel.sentFirestoreProposals.collectAsStateWithLifecycle()
+
     val dashboardState by viewModel.dashboardState.collectAsStateWithLifecycle()
     val isRefreshingDashboard by viewModel.isRefreshingDashboard.collectAsStateWithLifecycle()
 
@@ -225,6 +241,7 @@ fun Idea2ImpactApp() {
     val useFastAiModel by viewModel.useFastAiModel.collectAsStateWithLifecycle()
     val copilotMessages by viewModel.copilotMessages.collectAsStateWithLifecycle()
     val isAiLoading by viewModel.isAiLoading.collectAsStateWithLifecycle()
+    val aiStatusState by viewModel.aiStatusState.collectAsStateWithLifecycle()
     val canRegenerateLastReply by viewModel.canRegenerateLastReply.collectAsStateWithLifecycle()
     val customApiKey by viewModel.customApiKey.collectAsStateWithLifecycle()
 
@@ -297,6 +314,7 @@ fun Idea2ImpactApp() {
                 currentRouteName.contains("Dashboard") -> "dashboard"
                 currentRouteName.contains("Detail") -> "innovation_detail"
                 currentRouteName.contains("Pricing") -> "pricing"
+                currentRouteName.contains("Matches") -> "ecosystem_matches"
                 else -> currentRouteName.substringAfterLast('.')
             }
             analyticsTracker.logScreenView(screenName, currentRouteName.substringAfterLast('.'))
@@ -314,7 +332,9 @@ fun Idea2ImpactApp() {
         )
     }
 
-    val showMainChrome = !currentRouteName.contains("Detail") && !currentRouteName.contains("Pricing")
+    val showMainChrome = !currentRouteName.contains("Detail") &&
+        !currentRouteName.contains("Pricing") &&
+        !currentRouteName.contains("Matches")
 
     val hapticManager = rememberHapticFeedbackManager()
 
@@ -661,10 +681,18 @@ fun Idea2ImpactApp() {
                                     isRefreshing = isSyncingInnovations,
                                     isOfflineCache = isShowingOfflineCache,
                                     searchQuery = searchQuery,
+                                    recentSearches = recentSearches,
                                     selectedCategory = selectedCategory,
                                     selectedStage = selectedStage,
                                     selectedSort = selectedSort,
                                     onSearchChange = { viewModel.setSearchQuery(it) },
+                                    onSubmitSearch = { viewModel.submitSearchQuery(it) },
+                                    onSelectRecentSearch = {
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.selectRecentSearch(it)
+                                    },
+                                    onDeleteRecentSearch = { viewModel.deleteRecentSearch(it) },
+                                    onClearRecentSearches = { viewModel.clearRecentSearches() },
                                     onCategoryChange = {
                                         StartupSoundPlayer.playTap(context)
                                         viewModel.setSelectedCategory(it, source = "filter_chip")
@@ -719,6 +747,7 @@ fun Idea2ImpactApp() {
                                 CopilotScreen(
                                     messages = copilotMessages,
                                     isLoading = isAiLoading,
+                                    aiStatus = aiStatusState,
                                     customApiKey = customApiKey,
                                     availableInnovations = availableInnovations,
                                     focusedInnovation = focusedInnovation,
@@ -753,6 +782,18 @@ fun Idea2ImpactApp() {
                                         StartupSoundPlayer.playTap(context)
                                         viewModel.regenerateLastCopilotReply(isPopup = false)
                                     },
+                                    onRetryTimedOut = { messageId ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.retryTimedOutCopilotMessage(messageId, isPopup = false)
+                                    },
+                                    onSwitchToFastAndRetry = { messageId ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.switchToFastAndRetry(messageId, isPopup = false)
+                                    },
+                                    onSwitchToDefaultAiAndRetry = { messageId ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.switchToDefaultAiAndRetry(messageId, isPopup = false)
+                                    },
                                     onResetChat = {
                                         StartupSoundPlayer.playTap(context)
                                         viewModel.resetCopilotChat()
@@ -774,9 +815,30 @@ fun Idea2ImpactApp() {
                                         StartupSoundPlayer.playTap(context)
                                         viewModel.loadTalents()
                                     },
-                                    onSendConnectMessage = { talent, _ ->
-                                        StartupSoundPlayer.playSuccess(context)
-                                        viewModel.showMessage("Connection proposal sent to ${talent.name}!")
+                                    myTalentProfile = myTalentProfile,
+                                    availableInnovations = availableInnovations,
+                                    verifiedOrganizations = verifiedOrganizations,
+                                    savedOpportunityIds = savedOpportunityIds,
+                                    isBusy = isBusy,
+                                    onToggleTalentVisibility = { viewModel.toggleTalentVisibility(it) },
+                                    onSaveMyTalentProfile = { name, role, headline, bio, skills, loc, isPub, onDone ->
+                                        viewModel.saveMyTalentProfile(name, role, headline, bio, skills, loc, isPub) {
+                                            StartupSoundPlayer.playSuccess(context)
+                                            onDone()
+                                        }
+                                    },
+                                    onSendCollaborationProposal = { talent, inn, type, amt, msg, contact, scope, summary, onDone ->
+                                        viewModel.sendCollaborationProposal(talent, inn, type, amt, msg, contact, scope, summary) {
+                                            StartupSoundPlayer.playSuccess(context)
+                                            onDone()
+                                        }
+                                    },
+                                    onImportVerifiedJson = { raw -> viewModel.importVerifiedDirectoryJson(raw) },
+                                    onClearImportedDirectory = { viewModel.clearImportedDirectory() },
+                                    onToggleSaveOrganization = { viewModel.toggleSaveOpportunity(it) },
+                                    onOpenMatches = {
+                                        StartupSoundPlayer.playTap(context)
+                                        navController.navigate(AppRoute.Matches)
                                     }
                                 )
                             }
@@ -788,6 +850,9 @@ fun Idea2ImpactApp() {
                                     currentUser = currentUser,
                                     dashboardState = dashboardState,
                                     isRefreshing = isRefreshingDashboard,
+                                    incomingProposals = incomingFirestoreProposals,
+                                    sentProposals = sentFirestoreProposals,
+                                    isBusy = isBusy,
                                     onOpenAuth = {
                                         StartupSoundPlayer.playTap(context)
                                         viewModel.openAuthModal()
@@ -812,6 +877,13 @@ fun Idea2ImpactApp() {
                                     onOpenPricing = {
                                         StartupSoundPlayer.playTap(context)
                                         navController.navigate(AppRoute.Pricing)
+                                    },
+                                    onOpenMatches = {
+                                        StartupSoundPlayer.playTap(context)
+                                        navController.navigate(AppRoute.Matches)
+                                    },
+                                    onRespondToProposal = { propId, accept ->
+                                        viewModel.respondToProposal(propId, accept)
                                     },
                                     onSignOut = {
                                         StartupSoundPlayer.playTap(context)
@@ -875,6 +947,11 @@ fun Idea2ImpactApp() {
                                             StartupSoundPlayer.playTap(context)
                                             viewModel.setFocusedInnovation(detail)
                                             navigateTopTab(bottomTabs[2])
+                                        },
+                                        onFindMatches = {
+                                            StartupSoundPlayer.playTap(context)
+                                            viewModel.setFocusedInnovation(detail)
+                                            navController.navigate(AppRoute.Matches)
                                         }
                                     )
                                 } else {
@@ -896,6 +973,32 @@ fun Idea2ImpactApp() {
                                 )
                             }
                         }
+
+                        composable<AppRoute.Matches> {
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this@composable) {
+                                BackHandler { navController.popBackStack() }
+                                MatchesScreen(
+                                    activeInnovation = focusedInnovation ?: selectedDetail,
+                                    availableInnovations = availableInnovations,
+                                    savedOpportunityIds = savedOpportunityIds,
+                                    isBusy = isBusy,
+                                    onComputeMatches = { title, desc, cat, stage, loc ->
+                                        viewModel.computeEcosystemMatches(title, desc, cat, stage, loc)
+                                    },
+                                    onToggleSaveOrganization = { viewModel.toggleSaveOpportunity(it) },
+                                    onSendCollaborationProposal = { talent, inn, type, amt, msg, contact, scope, summary, onDone ->
+                                        viewModel.sendCollaborationProposal(talent, inn, type, amt, msg, contact, scope, summary) {
+                                            StartupSoundPlayer.playSuccess(context)
+                                            onDone()
+                                        }
+                                    },
+                                    onBack = {
+                                        StartupSoundPlayer.playTap(context)
+                                        navController.popBackStack()
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -910,6 +1013,8 @@ fun Idea2ImpactApp() {
                     },
                     messages = copilotMessages,
                     isLoading = isAiLoading,
+                    aiStatus = aiStatusState,
+                    canRegenerate = canRegenerateLastReply,
                     useFastModel = useFastAiModel,
                     activeContext = focusedInnovation ?: selectedDetail,
                     onToggleFastModel = {
@@ -927,6 +1032,22 @@ fun Idea2ImpactApp() {
                     onStopGeneration = {
                         StartupSoundPlayer.playTap(context)
                         viewModel.stopCopilotGeneration()
+                    },
+                    onRegenerateLast = {
+                        StartupSoundPlayer.playTap(context)
+                        viewModel.regenerateLastCopilotReply(isPopup = true)
+                    },
+                    onRetryTimedOut = { messageId ->
+                        StartupSoundPlayer.playTap(context)
+                        viewModel.retryTimedOutCopilotMessage(messageId, isPopup = true)
+                    },
+                    onSwitchToFastAndRetry = { messageId ->
+                        StartupSoundPlayer.playTap(context)
+                        viewModel.switchToFastAndRetry(messageId, isPopup = true)
+                    },
+                    onSwitchToDefaultAiAndRetry = { messageId ->
+                        StartupSoundPlayer.playTap(context)
+                        viewModel.switchToDefaultAiAndRetry(messageId, isPopup = true)
                     },
                     onOpenFullCopilot = {
                         isAiPopupExpanded = false
