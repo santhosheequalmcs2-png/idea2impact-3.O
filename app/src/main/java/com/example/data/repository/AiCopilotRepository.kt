@@ -674,17 +674,19 @@ class AiCopilotRepository(private val appContext: Context? = null) {
         var phase = "awaiting_first_chunk"
         val preflight = probeAppCheckStatus()
         val appCheckStatus = preflight.statusLabel
-        if (preflight.abortCategory != null) {
+        if (preflight.abortCategory in setOf(AiFailureCategory.NETWORK_OFFLINE, AiFailureCategory.NETWORK_BLOCKED)) {
             throw AiCopilotDiagnosticException(
                 route = "deep_flash",
                 modelName = DEEP_MODEL_NAME,
-                phase = if (preflight.abortCategory == AiFailureCategory.APP_CHECK_OR_AUTH) "app_check_probe" else "network_preflight",
+                phase = "network_preflight",
                 elapsedMs = 0L,
                 chunkCount = 0,
                 appCheckStatus = appCheckStatus,
                 cause = preflight.cause ?: IllegalStateException(preflight.detail.ifBlank { appCheckStatus }),
-                category = preflight.abortCategory
+                category = preflight.abortCategory!!
             )
+        } else if (preflight.abortCategory == AiFailureCategory.APP_CHECK_OR_AUTH) {
+            Log.w(TAG, "App Check preflight non-blocking for legacy stream ($appCheckStatus); attempting Firebase AI directly.")
         }
         try {
             withTimeout(AI_TIMEOUT_MS) {

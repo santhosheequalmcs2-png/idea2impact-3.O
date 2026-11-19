@@ -558,4 +558,68 @@ class AiCopilotDiagnosticsTest {
         assertThat(redacted).contains("AIza***")
         assertThat(redacted).contains("Bearer ***")
     }
+
+    @Test
+    fun preflightAppCheckWarning_proceedsToDirectFirebaseAiStream() = runBlocking {
+        val repo = AiCopilotRepository()
+        var streamInvoked = false
+        val loggedWarnings = mutableListOf<String>()
+
+        val emitted = repo.executeStreamWithRecovery(
+            useFastModel = false,
+            appCheckProbe = { "app_check_rejected" },
+            preflightCheck = {
+                com.example.util.AppCheckProbeOutcome(
+                    statusLabel = "app_check_debug_unregistered",
+                    abortCategory = AiFailureCategory.APP_CHECK_OR_AUTH,
+                    detail = "Debug token not yet registered"
+                )
+            },
+            streamFactory = {
+                streamInvoked = true
+                flow {
+                    emit("Direct Firebase AI ")
+                    emit("response succeeded")
+                }
+            },
+            logger = { level, msg, _ ->
+                if (level == "W") loggedWarnings.add(msg)
+            }
+        ).toList()
+
+        assertThat(streamInvoked).isTrue()
+        assertThat(emitted).containsExactly("Direct Firebase AI ", "Direct Firebase AI response succeeded").inOrder()
+        assertThat(loggedWarnings.any { it.contains("non-blocking") }).isTrue()
+    }
+
+    @Test
+    fun preflightOfflineAndBlocked_stillAbortBeforeCallingStreamFactory() = runBlocking {
+        val repo = AiCopilotRepository()
+
+        for (category in listOf(AiFailureCategory.NETWORK_OFFLINE, AiFailureCategory.NETWORK_BLOCKED)) {
+            var streamCalled = false
+            try {
+                repo.executeStreamWithRecovery(
+                    useFastModel = false,
+                    appCheckProbe = { "offline" },
+                    preflightCheck = {
+                        com.example.util.AppCheckProbeOutcome(
+                            statusLabel = category.name.lowercase(),
+                            abortCategory = category,
+                            detail = "Network unavailable"
+                        )
+                    },
+                    streamFactory = {
+                        streamCalled = true
+                        flow { emit("should not run") }
+                    }
+                ).toList()
+                fail("Expected preflight abort for $category")
+            } catch (e: AiCopilotDiagnosticException) {
+                assertThat(e.category).isEqualTo(category)
+                assertThat(e.phase).isEqualTo("network_preflight")
+            }
+            assertThat(streamCalled).isFalse()
+        }
+    }
 }

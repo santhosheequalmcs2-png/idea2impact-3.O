@@ -1230,11 +1230,29 @@ class AppViewModel(
         viewModelScope.launch {
             _isActionBusy.value = true
             try {
-                if (repository.hasSavedToken()) {
-                    repository.submitProposal(innovationId, type, amount, message, contactInfo)
-                }
                 val targetInnovation = _selectedDetail.value?.takeIf { it.id == innovationId }
                     ?: availableInnovations.value.firstOrNull { it.id == innovationId }
+                val fbUid = Firebase.auth.currentUser?.uid
+                if (repository.hasSavedToken()) {
+                    repository.submitProposal(innovationId, type, amount, message, contactInfo)
+                } else if (fbUid != null && ideaRepository != null && targetInnovation != null) {
+                    val recipientId = targetInnovation.authorId.takeIf { it.isNotBlank() && it != fbUid }
+                    if (recipientId != null) {
+                        ideaRepository.submitCollaborationProposal(
+                            recipientId = recipientId,
+                            recipientName = targetInnovation.authorName,
+                            innovationId = innovationId,
+                            innovationTitle = targetInnovation.title,
+                            proposalType = type,
+                            amount = amount,
+                            message = message,
+                            contactInfo = contactInfo,
+                            sharedIdeaScope = ShareIdeaScope.PROBLEM_SUMMARY,
+                            sharedIdeaSummary = targetInnovation.description.take(280),
+                            senderProfile = myFirestoreProfile.value
+                        )
+                    }
+                }
                 notificationDataStore?.recordProposalSubmitted(
                     innovation = targetInnovation,
                     innovationId = innovationId,
@@ -1574,9 +1592,13 @@ class AppViewModel(
             if (isUserSignedIn()) {
                 val saved = availableInnovations.value.filter { it.isBookmarked }
                 val totalLikes = availableInnovations.value.count { it.isLiked }
+                val cloudProposalCount = incomingFirestoreProposals.value.size
+                val postedCount = myTalentProfile.value?.projectsCount?.toInt() ?: 0
                 _dashboardState.value = UiState.Success(
                     DashboardStats(
-                        savedOpportunities = saved.size,
+                        innovationsPosted = postedCount,
+                        savedOpportunities = saved.size + savedOpportunityIds.value.size,
+                        proposalsReceived = cloudProposalCount,
                         totalUpvotes = totalLikes,
                         savedList = saved
                     )
