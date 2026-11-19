@@ -259,10 +259,11 @@ object SanaPromptEngine {
                 is kotlinx.coroutines.TimeoutCancellationException,
                 is java.net.SocketTimeoutException,
                 is java.io.InterruptedIOException -> return AiFailureCategory.TIMEOUT
+                is javax.net.ssl.SSLHandshakeException,
+                is javax.net.ssl.SSLException -> return AiFailureCategory.NETWORK_BLOCKED
                 is java.net.UnknownHostException,
                 is java.net.ConnectException,
-                is java.net.NoRouteToHostException,
-                is javax.net.ssl.SSLHandshakeException -> return AiFailureCategory.NETWORK_OFFLINE
+                is java.net.NoRouteToHostException -> return AiFailureCategory.NETWORK_OFFLINE
                 is BackendApiException -> when (current.code) {
                     401, 403 -> return AiFailureCategory.APP_CHECK_OR_AUTH
                     404 -> return if (msgLower.contains("model")) AiFailureCategory.MODEL_UNAVAILABLE else AiFailureCategory.CUSTOM_KEY_OR_BACKEND
@@ -334,6 +335,7 @@ object SanaPromptEngine {
                 msgLower.contains("no address associated") ||
                 msgLower.contains("connection reset") ||
                 msgLower.contains("software caused connection abort") ||
+                msgLower.contains("network error") ||
                 msgLower.contains("network")
             ) {
                 return if (diag != null && diag.chunkCount > 0) {
@@ -341,6 +343,14 @@ object SanaPromptEngine {
                 } else {
                     AiFailureCategory.NETWORK_OFFLINE
                 }
+            }
+            if (msgLower.contains("certpath") ||
+                msgLower.contains("trust anchor") ||
+                msgLower.contains("captive portal") ||
+                msgLower.contains("ssl") ||
+                msgLower.contains("tls")
+            ) {
+                return AiFailureCategory.NETWORK_BLOCKED
             }
             if (msgLower.contains("empty") &&
                 (msgLower.contains("response") || msgLower.contains("reply") || msgLower.contains("stream"))
@@ -351,7 +361,17 @@ object SanaPromptEngine {
         }
 
         if (diag != null) {
-            if (diag.appCheckStatus.startsWith("probe_error")) {
+            if (diag.appCheckStatus.startsWith("device_offline") ||
+                diag.appCheckStatus.startsWith("network_unreachable")
+            ) {
+                return AiFailureCategory.NETWORK_OFFLINE
+            }
+            if (diag.appCheckStatus.startsWith("https_blocked")) {
+                return AiFailureCategory.NETWORK_BLOCKED
+            }
+            if (diag.appCheckStatus.startsWith("rejected:") ||
+                (diag.appCheckStatus.startsWith("probe_error") && diag.phase == "app_check_probe")
+            ) {
                 return AiFailureCategory.APP_CHECK_OR_AUTH
             }
             if (diag.chunkCount > 0 || diag.phase == "streaming_chunks") {
@@ -372,8 +392,15 @@ object SanaPromptEngine {
                 .orEmpty()
 
             return when (category) {
-                AiFailureCategory.APP_CHECK_OR_AUTH ->
-                    "Firebase AI / App Check rejected the request on ${error.route} (${error.modelName}, phase=${error.phase}, appCheck=${error.appCheckStatus}). Check Firebase App Check debug token or API access, or toggle Fast mode and tap Retry.$primaryNoteSuffix"
+                AiFailureCategory.APP_CHECK_OR_AUTH -> {
+                    val appCheckStatus = com.example.util.lastAppCheckInitStatus
+                    val buildHint = if (appCheckStatus.buildType == "debug") {
+                        "Debug build (${appCheckStatus.projectId}): register this device's 'DebugAppCheckProvider' UUID from Logcat in Firebase Console > App Check > Apps > Manage debug tokens."
+                    } else {
+                        "Release build (${appCheckStatus.projectId}): verify App Check reCAPTCHA/Play Integrity and app signing SHA-256 in Firebase Console."
+                    }
+                    "Firebase AI / App Check rejected attestation on ${error.route} (${error.modelName}, phase=${error.phase}, appCheck=${error.appCheckStatus}): $sanitizedCause. $buildHint$primaryNoteSuffix"
+                }
                 AiFailureCategory.TIMEOUT -> {
                     val phaseHint = when (error.phase) {
                         "app_check_probe" -> "while acquiring Firebase App Check token"
@@ -384,7 +411,9 @@ object SanaPromptEngine {
                     "AI Sana timed out $phaseHint (${error.route} · ${error.modelName}, appCheck=${error.appCheckStatus}). Check your network connection or toggle Fast mode and tap Retry.$primaryNoteSuffix"
                 }
                 AiFailureCategory.NETWORK_OFFLINE ->
-                    "Unable to reach Firebase AI servers (${error.route} · ${error.modelName}) during ${error.phase}. Check internet connectivity and tap Retry.$primaryNoteSuffix"
+                    "No internet connection or Firebase servers are unreachable (${error.route} · ${error.modelName}, phase=${error.phase}, net=${error.appCheckStatus}). Enable Wi-Fi or mobile data and tap Retry.$primaryNoteSuffix"
+                AiFailureCategory.NETWORK_BLOCKED ->
+                    "HTTPS connection to Firebase was blocked (${error.route} · ${error.modelName}, net=${error.appCheckStatus}): $sanitizedCause. Check VPN, Private DNS, firewall, or Wi-Fi captive portal sign-in and tap Retry.$primaryNoteSuffix"
                 AiFailureCategory.MODEL_UNAVAILABLE ->
                     "The selected AI model (${error.modelName}) is currently unavailable or unsupported on ${error.route} (phase=${error.phase}): $sanitizedCause. Switch modes or tap Retry.$primaryNoteSuffix"
                 AiFailureCategory.QUOTA_OR_RATE_LIMIT ->
@@ -416,9 +445,11 @@ object SanaPromptEngine {
             AiFailureCategory.TIMEOUT ->
                 "AI Sana timed out while waiting for a response ($routeName). Check your connection or toggle Fast mode and tap Retry."
             AiFailureCategory.NETWORK_OFFLINE ->
-                "Unable to reach AI Sana right now. Check your internet connection and tap Retry."
+                "No internet connection or AI Sana is unreachable right now. Check Wi-Fi or mobile data and tap Retry."
+            AiFailureCategory.NETWORK_BLOCKED ->
+                "HTTPS connection to AI Sana was blocked (TLS/firewall/captive portal). Check VPN, Private DNS, or Wi-Fi sign-in and tap Retry."
             AiFailureCategory.APP_CHECK_OR_AUTH ->
-                "Firebase AI / App Check authorization failed. Verify device network/time or Google Play Services, then tap Retry."
+                "Firebase AI / App Check authorization failed. Verify App Check token registration and device time/Play Services, then tap Retry."
             AiFailureCategory.MODEL_UNAVAILABLE ->
                 "The requested AI model is currently unavailable ($routeName): $sanitizedMsg. Switch modes or tap Retry."
             AiFailureCategory.QUOTA_OR_RATE_LIMIT ->

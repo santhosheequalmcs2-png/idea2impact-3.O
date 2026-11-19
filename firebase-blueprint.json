@@ -220,6 +220,283 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "organizationId", "organizationName", "organizationType", "sector", "createdAt"]
+    },
+    "UserPresence": {
+      "title": "UserPresence",
+      "description": "Real-time online/offline status and last-seen indicator (no PII).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string" },
+        "online": { "type": "boolean" },
+        "lastSeen": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "displayName", "role", "online", "lastSeen", "updatedAt"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Direct, group, or collaboration project messaging thread.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["DIRECT", "GROUP", "PROJECT"] },
+        "title": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "adminUids": { "type": "array" },
+        "memberUids": { "type": "array" },
+        "memberSummaries": { "type": "object" },
+        "contextType": { "type": "string", "enum": ["GENERAL", "INNOVATION", "PROPOSAL", "COLLABORATION"] },
+        "innovationId": { "type": "string" },
+        "innovationTitle": { "type": "string" },
+        "collaborationId": { "type": "string" },
+        "lastMessagePreview": { "type": "string" },
+        "lastSenderId": { "type": "string" },
+        "lastSenderName": { "type": "string" },
+        "lastMessageAt": { "type": "string", "format": "date-time" },
+        "unreadCounts": { "type": "object" },
+        "typingByUid": { "type": "object" },
+        "blockedByUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "type", "title", "createdBy", "adminUids", "memberUids",
+        "contextType", "lastMessagePreview", "lastSenderId", "lastSenderName",
+        "lastMessageAt", "unreadCounts", "createdAt", "updatedAt"
+      ]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Message inside a conversation with reply, reactions, read receipts, and attachment metadata.",
+      "type": "object",
+      "properties": {
+        "conversationId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "senderRole": { "type": "string" },
+        "senderAvatar": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "messageType": { "type": "string", "enum": ["TEXT", "IMAGE", "DOCUMENT", "LINK", "COLLABORATION_INVITE", "SYSTEM"] },
+        "body": { "type": "string" },
+        "replyToMessageId": { "type": "string" },
+        "replyToSenderName": { "type": "string" },
+        "replyToSnippet": { "type": "string" },
+        "attachmentName": { "type": "string" },
+        "attachmentMimeType": { "type": "string" },
+        "attachmentSizeBytes": { "type": "integer" },
+        "attachmentPreviewBase64": { "type": "string" },
+        "attachmentUrl": { "type": "string" },
+        "sharedInnovationId": { "type": "string" },
+        "sharedInnovationTitle": { "type": "string" },
+        "sharedCollaborationId": { "type": "string" },
+        "reactions": { "type": "object" },
+        "readByUids": { "type": "array" },
+        "deliveredToUids": { "type": "array" },
+        "edited": { "type": "boolean" },
+        "deleted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "conversationId", "senderId", "senderName", "memberUids", "messageType",
+        "body", "reactions", "readByUids", "deliveredToUids", "edited", "deleted", "createdAt", "updatedAt"
+      ]
+    },
+    "UserConversationPref": {
+      "title": "UserConversationPref",
+      "description": "Per-user pin, mute, and archive state for a conversation.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "pinned": { "type": "boolean" },
+        "muted": { "type": "boolean" },
+        "archived": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "conversationId", "pinned", "muted", "archived", "updatedAt"]
+    },
+    "BlockedUser": {
+      "title": "BlockedUser",
+      "description": "Private user block entry.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "blockedUid": { "type": "string" },
+        "blockedName": { "type": "string" },
+        "reason": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "blockedUid", "blockedName", "createdAt"]
+    },
+    "ModerationReport": {
+      "title": "ModerationReport",
+      "description": "User safety report for abuse or spam in messaging.",
+      "type": "object",
+      "properties": {
+        "reporterId": { "type": "string" },
+        "targetUserId": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "reason": { "type": "string" },
+        "details": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["reporterId", "targetUserId", "reason", "createdAt"]
+    },
+    "CollaborationProject": {
+      "title": "CollaborationProject",
+      "description": "Private member-scoped collaboration workspace converted from messaging or created directly.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "relatedInnovationId": { "type": "string" },
+        "relatedInnovationTitle": { "type": "string" },
+        "requiredSkills": { "type": "array" },
+        "objectives": { "type": "string" },
+        "expectedDeliverables": { "type": "string" },
+        "proposedTimeline": { "type": "string" },
+        "referenceLinks": { "type": "array" },
+        "status": { "type": "string", "enum": ["PLANNING", "ACTIVE", "REVIEW", "COMPLETED", "ON_HOLD"] },
+        "ownerId": { "type": "string" },
+        "adminUids": { "type": "array" },
+        "memberUids": { "type": "array" },
+        "memberRoles": { "type": "object" },
+        "memberNames": { "type": "object" },
+        "conversationId": { "type": "string" },
+        "progressPercent": { "type": "integer" },
+        "totalTasks": { "type": "integer" },
+        "completedTasks": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "title", "description", "category", "requiredSkills", "objectives",
+        "expectedDeliverables", "proposedTimeline", "status", "ownerId",
+        "adminUids", "memberUids", "memberRoles", "memberNames",
+        "progressPercent", "totalTasks", "completedTasks", "createdAt", "updatedAt"
+      ]
+    },
+    "CollaborationInvitation": {
+      "title": "CollaborationInvitation",
+      "description": "Invitation to join a collaboration project workspace.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "projectTitle": { "type": "string" },
+        "projectCategory": { "type": "string" },
+        "inviterId": { "type": "string" },
+        "inviterName": { "type": "string" },
+        "inviteeId": { "type": "string" },
+        "inviteeName": { "type": "string" },
+        "proposedRole": { "type": "string" },
+        "message": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "ACCEPTED", "DECLINED", "CANCELLED"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "projectId", "projectTitle", "projectCategory", "inviterId", "inviterName",
+        "inviteeId", "inviteeName", "proposedRole", "message", "status", "createdAt", "updatedAt"
+      ]
+    },
+    "CollaborationTask": {
+      "title": "CollaborationTask",
+      "description": "Deliverable task inside a collaboration project workspace.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "assigneeUid": { "type": "string" },
+        "assigneeName": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "priority": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "URGENT"] },
+        "status": { "type": "string", "enum": ["TODO", "IN_PROGRESS", "IN_REVIEW", "COMPLETED"] },
+        "dueAtEpochMs": { "type": "integer" },
+        "attachmentName": { "type": "string" },
+        "commentCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "projectId", "memberUids", "title", "description", "createdBy",
+        "priority", "status", "commentCount", "createdAt", "updatedAt"
+      ]
+    },
+    "TaskComment": {
+      "title": "TaskComment",
+      "description": "Member-only comment on a collaboration task.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "taskId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "body": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "taskId", "memberUids", "authorId", "authorName", "body", "createdAt"]
+    },
+    "CollaborationFile": {
+      "title": "CollaborationFile",
+      "description": "Member-private shared file or reference inside a collaboration workspace.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "uploadedBy": { "type": "string" },
+        "uploadedByName": { "type": "string" },
+        "fileName": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "sizeBytes": { "type": "integer" },
+        "referenceUrl": { "type": "string" },
+        "previewBase64": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "memberUids", "uploadedBy", "uploadedByName", "fileName", "mimeType", "sizeBytes", "createdAt"]
+    },
+    "CollaborationActivity": {
+      "title": "CollaborationActivity",
+      "description": "Milestone updates and audit log entries inside a collaboration project.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "actorId": { "type": "string" },
+        "actorName": { "type": "string" },
+        "actionType": { "type": "string" },
+        "summary": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "memberUids", "actorId", "actorName", "actionType", "summary", "createdAt"]
+    },
+    "CloudNotification": {
+      "title": "CloudNotification",
+      "description": "Recipient-private real-time notification for messages, invitations, and task activity.",
+      "type": "object",
+      "properties": {
+        "recipientId": { "type": "string" },
+        "senderId": { "type": "string" },
+        "senderName": { "type": "string" },
+        "notificationType": { "type": "string", "enum": ["MESSAGE", "COLLAB_INVITE", "COLLAB_RESPONSE", "TASK_ASSIGNED", "TASK_COMPLETED", "DEADLINE_ALERT", "PROJECT_UPDATE", "PROPOSAL"] },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "targetType": { "type": "string", "enum": ["CONVERSATION", "COLLABORATION", "INNOVATION"] },
+        "targetId": { "type": "string" },
+        "dedupeKey": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["recipientId", "senderId", "senderName", "notificationType", "title", "body", "targetType", "targetId", "read", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -246,6 +523,58 @@
     "/users/{userId}/pledges/{pledgeId}": {
       "schema": { "$ref": "#/entities/Pledge" },
       "description": "User's micro-backing pledges."
+    },
+    "/users/{userId}/conversation_prefs/{conversationId}": {
+      "schema": { "$ref": "#/entities/UserConversationPref" },
+      "description": "Per-user pin, mute, and archive state for conversations."
+    },
+    "/users/{userId}/blocked_users/{blockedUid}": {
+      "schema": { "$ref": "#/entities/BlockedUser" },
+      "description": "Users blocked by this account."
+    },
+    "/presence/{userId}": {
+      "schema": { "$ref": "#/entities/UserPresence" },
+      "description": "Public online presence and last-seen indicator."
+    },
+    "/conversations/{conversationId}": {
+      "schema": { "$ref": "#/entities/Conversation" },
+      "description": "Direct, group, and project conversations."
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Messages inside a conversation."
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "#/entities/ModerationReport" },
+      "description": "User safety reports."
+    },
+    "/collaboration_projects/{projectId}": {
+      "schema": { "$ref": "#/entities/CollaborationProject" },
+      "description": "Private member-only collaboration workspaces."
+    },
+    "/collaboration_invitations/{inviteId}": {
+      "schema": { "$ref": "#/entities/CollaborationInvitation" },
+      "description": "Collaboration workspace invitations."
+    },
+    "/collaboration_projects/{projectId}/tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/CollaborationTask" },
+      "description": "Tasks inside a collaboration project."
+    },
+    "/collaboration_projects/{projectId}/tasks/{taskId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/TaskComment" },
+      "description": "Comments on a collaboration task."
+    },
+    "/collaboration_projects/{projectId}/files/{fileId}": {
+      "schema": { "$ref": "#/entities/CollaborationFile" },
+      "description": "Member-private shared files in a collaboration project."
+    },
+    "/collaboration_projects/{projectId}/activity/{activityId}": {
+      "schema": { "$ref": "#/entities/CollaborationActivity" },
+      "description": "Updates and audit log for a collaboration project."
+    },
+    "/app_notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/CloudNotification" },
+      "description": "Real-time notifications for messaging and collaboration events."
     },
     "/innovations/{innovationId}": {
       "schema": { "$ref": "#/entities/Innovation" },

@@ -145,7 +145,11 @@ class SearchHistoryDaoTest {
         helper.close()
 
         val migratedDb = Room.databaseBuilder(context, Idea2ImpactDatabase::class.java, dbName)
-            .addMigrations(Idea2ImpactDatabase.MIGRATION_1_2)
+            .addMigrations(
+                Idea2ImpactDatabase.MIGRATION_1_2,
+                Idea2ImpactDatabase.MIGRATION_2_3,
+                Idea2ImpactDatabase.MIGRATION_3_4
+            )
             .allowMainThreadQueries()
             .build()
 

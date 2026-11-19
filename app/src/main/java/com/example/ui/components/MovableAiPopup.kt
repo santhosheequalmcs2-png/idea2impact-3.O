@@ -42,11 +42,16 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DragIndicator
+import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -75,6 +80,7 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -83,6 +89,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.analytics.LocalAnalyticsTracker
 import com.example.data.model.AiRequestPhase
 import com.example.data.model.AiStatusUiState
@@ -91,7 +98,12 @@ import com.example.data.model.CopilotMessage
 import com.example.ui.theme.CobaltBlue
 import com.example.ui.theme.ElectricCyan
 import com.example.ui.theme.EmeraldSuccess
+import com.example.ui.theme.GoldAmber
+import com.example.ui.theme.RoseError
+import com.example.util.AiNetworkHealthStatus
 import com.example.util.LocalHapticFeedbackManager
+import com.example.util.NetworkDiagnosticManager
+import com.example.util.NetworkDiagnosticState
 import kotlin.math.roundToInt
 
 private val POPUP_INNOVATION_PROMPTS = listOf(
@@ -116,6 +128,8 @@ fun MovableAiPopup(
     useFastModel: Boolean,
     activeContext: BackendInnovation?,
     canRegenerate: Boolean = false,
+    networkDiagnosticManager: NetworkDiagnosticManager? = null,
+    networkDiagnosticState: NetworkDiagnosticState? = null,
     onToggleFastModel: (Boolean) -> Unit,
     onSendPrompt: (prompt: String, promptSource: String) -> Unit,
     onStopGeneration: () -> Unit = {},
@@ -123,12 +137,26 @@ fun MovableAiPopup(
     onRetryTimedOut: (String) -> Unit = {},
     onSwitchToFastAndRetry: (String) -> Unit = {},
     onSwitchToDefaultAiAndRetry: (String) -> Unit = {},
+    onOpenDiagnostics: () -> Unit = {},
     onOpenFullCopilot: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val density = LocalDensity.current
     val haptics = LocalHapticFeedbackManager.current
     val analytics = LocalAnalyticsTracker.current
+    val resolvedDiagnosticManager = remember(networkDiagnosticManager, context) {
+        networkDiagnosticManager ?: NetworkDiagnosticManager.getInstance(context)
+    }
+    val collectedDiagnosticState by resolvedDiagnosticManager.state.collectAsStateWithLifecycle()
+    val effectiveDiagnosticState = networkDiagnosticState ?: collectedDiagnosticState
+    val showStreamNetworkStatus = effectiveDiagnosticState.isChecking || effectiveDiagnosticState.health in setOf(
+        AiNetworkHealthStatus.CHECKING,
+        AiNetworkHealthStatus.NO_INTERNET,
+        AiNetworkHealthStatus.FIREBASE_UNREACHABLE,
+        AiNetworkHealthStatus.REQUESTS_BLOCKED,
+        AiNetworkHealthStatus.APP_CHECK_ISSUE
+    )
 
     BoxWithConstraints(
         modifier = modifier
@@ -294,9 +322,11 @@ fun MovableAiPopup(
             var isDraggingPopup by remember { mutableStateOf(false) }
             val listState = rememberLazyListState()
 
-            LaunchedEffect(messages.size, messages.lastOrNull()?.content?.length) {
-                if (messages.isNotEmpty()) {
-                    listState.animateScrollToItem(messages.lastIndex)
+            LaunchedEffect(messages.size, messages.lastOrNull()?.content?.length, showStreamNetworkStatus) {
+                val targetIndex = (messages.size + (if (showStreamNetworkStatus) 1 else 0) - 1)
+                    .coerceAtLeast(0)
+                if (messages.isNotEmpty() || showStreamNetworkStatus) {
+                    listState.animateScrollToItem(targetIndex)
                 }
             }
 
@@ -357,7 +387,18 @@ fun MovableAiPopup(
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp)
                         )
-                        val popupStatusLabel = aiStatus.label.ifBlank { if (isLoading) "Thinking..." else "" }
+                        val popupStatusLabel = when {
+                            effectiveDiagnosticState.isChecking -> NetworkDiagnosticManager.LABEL_CHECKING_CONNECTION
+                            effectiveDiagnosticState.health == AiNetworkHealthStatus.NO_INTERNET ->
+                                NetworkDiagnosticManager.LABEL_NO_INTERNET
+                            else -> aiStatus.label.ifBlank { if (isLoading) "Thinking..." else "" }
+                        }
+                        val hasPopupNetIssue = effectiveDiagnosticState.health in setOf(
+                            AiNetworkHealthStatus.NO_INTERNET,
+                            AiNetworkHealthStatus.FIREBASE_UNREACHABLE,
+                            AiNetworkHealthStatus.REQUESTS_BLOCKED,
+                            AiNetworkHealthStatus.APP_CHECK_ISSUE
+                        )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "AI Sana Pop-up",
@@ -393,6 +434,50 @@ fun MovableAiPopup(
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
+                            } else if (effectiveDiagnosticState.isChecking) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                    modifier = Modifier.testTag("popup_network_status_banner")
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(10.dp),
+                                        strokeWidth = 1.6.dp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Text(
+                                        text = effectiveDiagnosticState.streamLabel.ifBlank {
+                                            NetworkDiagnosticManager.LABEL_CHECKING_CONNECTION
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            } else if (hasPopupNetIssue) {
+                                val issueColor = if (effectiveDiagnosticState.health == AiNetworkHealthStatus.APP_CHECK_ISSUE) {
+                                    GoldAmber
+                                } else {
+                                    RoseError
+                                }
+                                Text(
+                                    text = effectiveDiagnosticState.streamLabel.ifBlank {
+                                        effectiveDiagnosticState.statusMessage
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = issueColor,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .clickable {
+                                            haptics.tap()
+                                            onOpenDiagnostics()
+                                        }
+                                        .testTag("popup_network_status_banner")
+                                )
                             } else {
                                 Text(
                                     text = activeContext?.title ?: "Drag bar to move anywhere",
@@ -506,7 +591,13 @@ fun MovableAiPopup(
                                 ) {
                                     Column(modifier = Modifier.padding(10.dp)) {
                                         if (msg.isAssistant && msg.content.isBlank() && isLoading) {
-                                            val bubbleStatus = aiStatus.label.ifBlank { "Thinking..." }
+                                            val bubbleStatus = when {
+                                                effectiveDiagnosticState.isChecking ->
+                                                    NetworkDiagnosticManager.LABEL_CHECKING_CONNECTION
+                                                effectiveDiagnosticState.health == AiNetworkHealthStatus.NO_INTERNET ->
+                                                    NetworkDiagnosticManager.LABEL_NO_INTERNET
+                                                else -> aiStatus.label.ifBlank { "Thinking..." }
+                                            }
                                             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                                                 Row(
                                                     verticalAlignment = Alignment.CenterVertically,
@@ -677,6 +768,31 @@ fun MovableAiPopup(
                                                             )
                                                         }
                                                     }
+
+                                                    OutlinedButton(
+                                                        onClick = {
+                                                            haptics.tap()
+                                                            onOpenDiagnostics()
+                                                        },
+                                                        enabled = !isLoading,
+                                                        shape = RoundedCornerShape(10.dp),
+                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .heightIn(min = 48.dp)
+                                                            .testTag("popup_run_diagnostics_button")
+                                                    ) {
+                                                        Icon(
+                                                            imageVector = Icons.Filled.NetworkCheck,
+                                                            contentDescription = "Check device internet and Firebase reachability",
+                                                            modifier = Modifier.size(16.dp)
+                                                        )
+                                                        Spacer(Modifier.width(6.dp))
+                                                        Text(
+                                                            text = "Run Connection Check",
+                                                            style = MaterialTheme.typography.labelMedium
+                                                        )
+                                                    }
                                                 }
                                             } else if (msg.isAssistant && isLastMessage && !isCurrentlyStreaming && canRegenerate && msg.id != "welcome" && !msg.isError) {
                                                 Row(
@@ -706,6 +822,16 @@ fun MovableAiPopup(
                                         }
                                     }
                                 }
+                            }
+                        }
+
+                        if (showStreamNetworkStatus) {
+                            item(key = "popup_chat_stream_network_status") {
+                                ChatStreamNetworkStatusPill(
+                                    diagnosticState = effectiveDiagnosticState,
+                                    compact = true,
+                                    onClick = onOpenDiagnostics
+                                )
                             }
                         }
                     }

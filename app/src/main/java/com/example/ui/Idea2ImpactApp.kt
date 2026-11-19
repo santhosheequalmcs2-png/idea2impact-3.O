@@ -17,18 +17,22 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.DarkMode
@@ -36,6 +40,7 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material.icons.filled.VolumeUp
@@ -79,11 +84,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.credentials.CredentialManager
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
@@ -100,27 +107,37 @@ import com.example.R
 import com.example.analytics.FirebaseAnalyticsTracker
 import com.example.analytics.LocalAnalyticsTracker
 import com.example.data.local.Idea2ImpactDatabase
+import com.example.data.local.toBackendInnovation
+import com.example.data.local.toBackendTalent
 import com.example.data.model.UiState
 import com.example.data.preferences.NotificationLocalDataStore
 import com.example.data.preferences.ThemePreferences
 import com.example.data.preferences.TokenManager
+import com.example.data.repository.AiCopilotRepository
 import com.example.data.repository.BackendRepository
+import com.example.data.repository.CollaborationRepository
 import com.example.data.repository.EcosystemRepository
 import com.example.data.repository.IdeaRepository
+import com.example.data.repository.MessagingRepository
+import com.example.data.repository.PortfolioRepository
 import com.example.ui.auth.attemptAutoSignIn
 import com.example.ui.auth.signOutWithCredentialClear
 import com.example.ui.components.BackendAuthModal
+import com.example.ui.components.FirebaseDiagnosticsDialog
 import com.example.ui.components.LocalNavAnimatedVisibilityScope
 import com.example.ui.components.LocalSharedTransitionScope
 import com.example.ui.components.MovableAiPopup
 import com.example.ui.components.NotificationCenterSheet
 import com.example.ui.components.OpeningSplashOverlay
+import com.example.ui.screens.CollaborationWorkspaceScreen
+import com.example.ui.screens.CollaborationsScreen
 import com.example.ui.screens.CopilotScreen
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.DetailScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.MarketplaceScreen
 import com.example.ui.screens.MatchesScreen
+import com.example.ui.screens.MessagesScreen
 import com.example.ui.screens.OnboardingScreen
 import com.example.ui.screens.PricingScreen
 import com.example.ui.screens.TalentScreen
@@ -141,6 +158,9 @@ sealed interface AppRoute {
     @Serializable data object Detail : AppRoute
     @Serializable data object Pricing : AppRoute
     @Serializable data object Matches : AppRoute
+    @Serializable data object Messages : AppRoute
+    @Serializable data object Collaborations : AppRoute
+    @Serializable data object CollaborationWorkspace : AppRoute
 }
 
 private data class BottomTab(
@@ -160,7 +180,8 @@ private fun routeOrder(route: String?): Int {
         name.contains("Copilot") -> 2
         name.contains("Talents") -> 3
         name.contains("Dashboard") -> 4
-        name.contains("Detail") || name.contains("Pricing") || name.contains("Matches") -> 5
+        name.contains("Detail") || name.contains("Pricing") || name.contains("Matches") ||
+            name.contains("Messages") || name.contains("Collaboration") -> 5
         else -> 0
     }
 }
@@ -182,19 +203,31 @@ fun Idea2ImpactApp() {
                 val notificationDataStore = NotificationLocalDataStore(app)
                 val ecosystemRepository = runCatching { EcosystemRepository(app) }.getOrNull()
                 val ideaRepository = runCatching { IdeaRepository(app) }.getOrNull()
+                val messagingRepository = runCatching { MessagingRepository(app) }.getOrNull()
+                val collaborationRepository = runCatching { CollaborationRepository(app) }.getOrNull()
                 val repository = BackendRepository(
                     tokenManager = tokenManager,
                     innovationDao = database.innovationDao(),
                     searchHistoryDao = database.searchHistoryDao()
                 )
+                val portfolioRepository = PortfolioRepository(
+                    ideaPortfolioDao = database.ideaPortfolioDao(),
+                    investorPortfolioDao = database.investorPortfolioDao(),
+                    savedProfileDao = database.savedProfileDao()
+                )
                 AppViewModel(
                     repository = repository,
                     tokenManager = tokenManager,
                     themePreferences = themePreferences,
+                    aiCopilotRepository = AiCopilotRepository(app.applicationContext),
                     notificationDataStore = notificationDataStore,
                     analyticsTracker = analyticsTracker,
                     ecosystemRepository = ecosystemRepository,
-                    ideaRepository = ideaRepository
+                    ideaRepository = ideaRepository,
+                    appContext = app.applicationContext,
+                    portfolioRepository = portfolioRepository,
+                    messagingRepository = messagingRepository,
+                    collaborationRepository = collaborationRepository
                 )
             }
         }
@@ -235,6 +268,16 @@ fun Idea2ImpactApp() {
 
     val dashboardState by viewModel.dashboardState.collectAsStateWithLifecycle()
     val isRefreshingDashboard by viewModel.isRefreshingDashboard.collectAsStateWithLifecycle()
+    val ideaPortfolioItems by viewModel.ideaPortfolioItems.collectAsStateWithLifecycle()
+    val ideaPortfolioIds by viewModel.ideaPortfolioIds.collectAsStateWithLifecycle()
+    val ideaPortfolioQuery by viewModel.ideaPortfolioQuery.collectAsStateWithLifecycle()
+    val investorPortfolioItems by viewModel.investorPortfolioItems.collectAsStateWithLifecycle()
+    val investorPortfolioIds by viewModel.investorPortfolioIds.collectAsStateWithLifecycle()
+    val investorPortfolioQuery by viewModel.investorPortfolioQuery.collectAsStateWithLifecycle()
+    val investorStatusFilter by viewModel.investorStatusFilter.collectAsStateWithLifecycle()
+    val savedProfiles by viewModel.savedProfiles.collectAsStateWithLifecycle()
+    val savedProfileIds by viewModel.savedProfileIds.collectAsStateWithLifecycle()
+    val savedProfilesQuery by viewModel.savedProfilesQuery.collectAsStateWithLifecycle()
 
     val availableInnovations by viewModel.availableInnovations.collectAsStateWithLifecycle()
     val focusedInnovation by viewModel.focusedInnovation.collectAsStateWithLifecycle()
@@ -247,10 +290,27 @@ fun Idea2ImpactApp() {
 
     val isBusy by viewModel.isActionBusy.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.snackbarMessage.collectAsStateWithLifecycle()
+    val networkDiagnosticState by viewModel.networkDiagnosticState.collectAsStateWithLifecycle()
+    val diagnosticsReport by viewModel.diagnosticsReport.collectAsStateWithLifecycle()
+
+    val firebaseUid by viewModel.firebaseUid.collectAsStateWithLifecycle()
+    val conversations by viewModel.conversations.collectAsStateWithLifecycle()
+    val unreadMessagesCount by viewModel.unreadMessagesCount.collectAsStateWithLifecycle()
+    val activeConversation by viewModel.activeConversation.collectAsStateWithLifecycle()
+    val activeMessages by viewModel.activeMessages.collectAsStateWithLifecycle()
+    val collaborations by viewModel.collaborations.collectAsStateWithLifecycle()
+    val incomingCollabInvites by viewModel.incomingCollabInvites.collectAsStateWithLifecycle()
+    val pendingInvitesCount by viewModel.pendingInvitesCount.collectAsStateWithLifecycle()
+    val activeProject by viewModel.activeProject.collectAsStateWithLifecycle()
+    val activeProjectTasks by viewModel.activeProjectTasks.collectAsStateWithLifecycle()
+    val activeProjectFiles by viewModel.activeProjectFiles.collectAsStateWithLifecycle()
+    val activeProjectActivity by viewModel.activeProjectActivity.collectAsStateWithLifecycle()
+    val activeTaskComments by viewModel.activeTaskComments.collectAsStateWithLifecycle()
 
     var showOpeningSplash by rememberSaveable { mutableStateOf(true) }
     var isAiPopupExpanded by rememberSaveable { mutableStateOf(false) }
     var showNotificationsSheet by rememberSaveable { mutableStateOf(false) }
+    var showDiagnosticsDialog by rememberSaveable { mutableStateOf(false) }
 
     BackHandler(enabled = isAiPopupExpanded) {
         isAiPopupExpanded = false
@@ -315,6 +375,9 @@ fun Idea2ImpactApp() {
                 currentRouteName.contains("Detail") -> "innovation_detail"
                 currentRouteName.contains("Pricing") -> "pricing"
                 currentRouteName.contains("Matches") -> "ecosystem_matches"
+                currentRouteName.contains("Messages") -> "messages"
+                currentRouteName.contains("CollaborationWorkspace") -> "collaboration_workspace"
+                currentRouteName.contains("Collaborations") -> "collaborations"
                 else -> currentRouteName.substringAfterLast('.')
             }
             analyticsTracker.logScreenView(screenName, currentRouteName.substringAfterLast('.'))
@@ -334,7 +397,9 @@ fun Idea2ImpactApp() {
 
     val showMainChrome = !currentRouteName.contains("Detail") &&
         !currentRouteName.contains("Pricing") &&
-        !currentRouteName.contains("Matches")
+        !currentRouteName.contains("Matches") &&
+        !currentRouteName.contains("Messages") &&
+        !currentRouteName.contains("Collaboration")
 
     val hapticManager = rememberHapticFeedbackManager()
 
@@ -357,6 +422,8 @@ fun Idea2ImpactApp() {
             ) {
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val useRail = maxWidth >= 700.dp
+            val isCompactTopBar = maxWidth < 480.dp
+            val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
 
             Row(modifier = Modifier.fillMaxSize()) {
                 if (useRail && showMainChrome) {
@@ -381,6 +448,7 @@ fun Idea2ImpactApp() {
                     topBar = {
                         if (showMainChrome) {
                             var showUserMenu by remember { mutableStateOf(false) }
+                            var showCompactMoreMenu by remember { mutableStateOf(false) }
                             TopAppBar(
                                 colors = TopAppBarDefaults.topAppBarColors(
                                     containerColor = MaterialTheme.colorScheme.surface
@@ -388,7 +456,7 @@ fun Idea2ImpactApp() {
                                 title = {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(if (isCompactTopBar) 6.dp else 8.dp),
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(10.dp))
                                             .clickable {
@@ -403,23 +471,31 @@ fun Idea2ImpactApp() {
                                             shape = RoundedCornerShape(9.dp),
                                             color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
                                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)),
-                                            modifier = Modifier.size(30.dp)
+                                            modifier = Modifier.size(if (isCompactTopBar) 28.dp else 30.dp)
                                         ) {
                                             Box(contentAlignment = Alignment.Center) {
                                                 Icon(
                                                     imageVector = Icons.Filled.AutoAwesome,
                                                     contentDescription = stringResource(R.string.cd_brand_mark),
                                                     tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(18.dp)
+                                                    modifier = Modifier.size(if (isCompactTopBar) 16.dp else 18.dp)
                                                 )
                                             }
                                         }
                                         Text(
                                             text = "IDEA2IMPACT",
-                                            style = MaterialTheme.typography.titleMedium,
+                                            style = if (isCompactTopBar) {
+                                                MaterialTheme.typography.titleSmall.copy(
+                                                    fontSize = 15.sp,
+                                                    letterSpacing = (-0.2).sp
+                                                )
+                                            } else {
+                                                MaterialTheme.typography.titleMedium
+                                            },
                                             fontWeight = FontWeight.Bold,
                                             maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            softWrap = false,
+                                            overflow = TextOverflow.Clip
                                         )
                                     }
                                 },
@@ -428,9 +504,36 @@ fun Idea2ImpactApp() {
                                         onClick = {
                                             hapticManager.tap()
                                             StartupSoundPlayer.playTap(context)
+                                            navController.navigate(AppRoute.Messages)
+                                        },
+                                        modifier = Modifier.size(if (isCompactTopBar) 44.dp else 48.dp).testTag("header_messages_button")
+                                    ) {
+                                        BadgedBox(
+                                            badge = {
+                                                if (unreadMessagesCount > 0) {
+                                                    Badge {
+                                                        Text(
+                                                            text = if (unreadMessagesCount > 9) "9+" else unreadMessagesCount.toString()
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.Chat,
+                                                contentDescription = "Open messages",
+                                                tint = if (unreadMessagesCount > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+
+                                    IconButton(
+                                        onClick = {
+                                            hapticManager.tap()
+                                            StartupSoundPlayer.playTap(context)
                                             showNotificationsSheet = true
                                         },
-                                        modifier = Modifier.size(48.dp).testTag("header_notifications_button")
+                                        modifier = Modifier.size(if (isCompactTopBar) 44.dp else 48.dp).testTag("header_notifications_button")
                                     ) {
                                         BadgedBox(
                                             badge = {
@@ -451,37 +554,94 @@ fun Idea2ImpactApp() {
                                         }
                                     }
 
-                                    IconButton(
-                                        onClick = {
-                                            val nextEnabled = !isSoundEnabled
-                                            hapticManager.toggle(nextEnabled)
-                                            StartupSoundPlayer.setSoundEnabled(context, nextEnabled)
-                                            viewModel.setSoundEnabled(nextEnabled)
-                                            if (nextEnabled) {
-                                                StartupSoundPlayer.playTap(context)
-                                            }
-                                        },
-                                        modifier = Modifier.size(48.dp).testTag("sound_toggle_button")
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isSoundEnabled) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
-                                            contentDescription = if (isSoundEnabled) "Mute sound effects" else "Enable sound effects",
-                                            tint = if (isSoundEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
+                                    if (!isCompactTopBar) {
+                                        IconButton(
+                                            onClick = {
+                                                val nextEnabled = !isSoundEnabled
+                                                hapticManager.toggle(nextEnabled)
+                                                StartupSoundPlayer.setSoundEnabled(context, nextEnabled)
+                                                viewModel.setSoundEnabled(nextEnabled)
+                                                if (nextEnabled) {
+                                                    StartupSoundPlayer.playTap(context)
+                                                }
+                                            },
+                                            modifier = Modifier.size(48.dp).testTag("sound_toggle_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isSoundEnabled) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
+                                                contentDescription = if (isSoundEnabled) "Mute sound effects" else "Enable sound effects",
+                                                tint = if (isSoundEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
 
-                                    IconButton(
-                                        onClick = {
-                                            hapticManager.toggle(!isDark)
-                                            StartupSoundPlayer.playTap(context)
-                                            viewModel.toggleTheme()
-                                        },
-                                        modifier = Modifier.size(48.dp).testTag("theme_toggle_button")
-                                    ) {
-                                        Icon(
-                                            imageVector = if (isDark) Icons.Filled.LightMode else Icons.Filled.DarkMode,
-                                            contentDescription = if (isDark) "Switch to Light Mode" else "Switch to Dark Mode"
-                                        )
+                                        IconButton(
+                                            onClick = {
+                                                hapticManager.toggle(!isDark)
+                                                StartupSoundPlayer.playTap(context)
+                                                viewModel.toggleTheme()
+                                            },
+                                            modifier = Modifier.size(48.dp).testTag("theme_toggle_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isDark) Icons.Filled.LightMode else Icons.Filled.DarkMode,
+                                                contentDescription = if (isDark) "Switch to Light Mode" else "Switch to Dark Mode"
+                                            )
+                                        }
+                                    } else {
+                                        Box {
+                                            IconButton(
+                                                onClick = {
+                                                    hapticManager.tap()
+                                                    showCompactMoreMenu = true
+                                                },
+                                                modifier = Modifier.size(44.dp).testTag("header_more_menu")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.MoreVert,
+                                                    contentDescription = "Appearance and sound settings",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                            DropdownMenu(
+                                                expanded = showCompactMoreMenu,
+                                                onDismissRequest = { showCompactMoreMenu = false }
+                                            ) {
+                                                DropdownMenuItem(
+                                                    text = { Text(if (isSoundEnabled) "Sound: On" else "Sound: Off") },
+                                                    leadingIcon = {
+                                                        Icon(
+                                                            imageVector = if (isSoundEnabled) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
+                                                            contentDescription = null
+                                                        )
+                                                    },
+                                                    onClick = {
+                                                        val nextEnabled = !isSoundEnabled
+                                                        hapticManager.toggle(nextEnabled)
+                                                        StartupSoundPlayer.setSoundEnabled(context, nextEnabled)
+                                                        viewModel.setSoundEnabled(nextEnabled)
+                                                        if (nextEnabled) StartupSoundPlayer.playTap(context)
+                                                        showCompactMoreMenu = false
+                                                    },
+                                                    modifier = Modifier.testTag("sound_toggle_button")
+                                                )
+                                                DropdownMenuItem(
+                                                    text = { Text(if (isDark) "Light Theme" else "Dark Theme") },
+                                                    leadingIcon = {
+                                                        Icon(
+                                                            imageVector = if (isDark) Icons.Filled.LightMode else Icons.Filled.DarkMode,
+                                                            contentDescription = null
+                                                        )
+                                                    },
+                                                    onClick = {
+                                                        hapticManager.toggle(!isDark)
+                                                        StartupSoundPlayer.playTap(context)
+                                                        viewModel.toggleTheme()
+                                                        showCompactMoreMenu = false
+                                                    },
+                                                    modifier = Modifier.testTag("theme_toggle_button")
+                                                )
+                                            }
+                                        }
                                     }
 
                                     val user = currentUser
@@ -493,22 +653,25 @@ fun Idea2ImpactApp() {
                                                 viewModel.openAuthModal()
                                             },
                                             shape = RoundedCornerShape(10.dp),
-                                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                            contentPadding = PaddingValues(
+                                                horizontal = if (isCompactTopBar) 10.dp else 12.dp,
+                                                vertical = 6.dp
+                                            ),
                                             modifier = Modifier
-                                                .padding(end = 10.dp)
-                                                .heightIn(min = 38.dp)
+                                                .padding(end = if (isCompactTopBar) 6.dp else 10.dp)
+                                                .heightIn(min = 36.dp)
                                                 .testTag("header_login_button")
                                         ) {
-                                            Text("Login")
+                                            Text("Login", maxLines = 1)
                                         }
                                     } else {
-                                        Box(modifier = Modifier.padding(end = 12.dp)) {
+                                        Box(modifier = Modifier.padding(end = if (isCompactTopBar) 8.dp else 12.dp)) {
                                             Surface(
                                                 shape = CircleShape,
                                                 color = MaterialTheme.colorScheme.primaryContainer,
                                                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
                                                 modifier = Modifier
-                                                    .size(38.dp)
+                                                    .size(36.dp)
                                                     .clickable {
                                                         hapticManager.tap()
                                                         showUserMenu = true
@@ -548,6 +711,32 @@ fun Idea2ImpactApp() {
                                                     }
                                                 )
                                                 DropdownMenuItem(
+                                                    text = {
+                                                        Text(
+                                                            if (unreadMessagesCount > 0) "Messages ($unreadMessagesCount)"
+                                                            else "Messages"
+                                                        )
+                                                    },
+                                                    onClick = {
+                                                        hapticManager.tap()
+                                                        showUserMenu = false
+                                                        navController.navigate(AppRoute.Messages)
+                                                    }
+                                                )
+                                                DropdownMenuItem(
+                                                    text = {
+                                                        Text(
+                                                            if (pendingInvitesCount > 0) "Collaborations ($pendingInvitesCount invite)"
+                                                            else "Collaborations & Projects"
+                                                        )
+                                                    },
+                                                    onClick = {
+                                                        hapticManager.tap()
+                                                        showUserMenu = false
+                                                        navController.navigate(AppRoute.Collaborations)
+                                                    }
+                                                )
+                                                DropdownMenuItem(
                                                     text = { Text("Plans & Pricing") },
                                                     onClick = {
                                                         hapticManager.tap()
@@ -576,7 +765,7 @@ fun Idea2ImpactApp() {
                         }
                     },
                     bottomBar = {
-                        if (!useRail && showMainChrome) {
+                        if (!useRail && showMainChrome && !isImeVisible) {
                             NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                                 bottomTabs.forEach { tab ->
                                     val selected = currentRouteName.startsWith(tab.qualifiedName)
@@ -595,7 +784,9 @@ fun Idea2ImpactApp() {
                     NavHost(
                         navController = navController,
                         startDestination = AppRoute.Home,
-                        modifier = Modifier.padding(innerPadding),
+                        modifier = Modifier
+                            .padding(innerPadding)
+                            .consumeWindowInsets(innerPadding),
                         enterTransition = {
                             val from = routeOrder(initialState.destination.route)
                             val to = routeOrder(targetState.destination.route)
@@ -645,9 +836,13 @@ fun Idea2ImpactApp() {
                     ) {
                         composable<AppRoute.Home> {
                             CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this@composable) {
+                                val liveTalentsCount = (talentsState as? UiState.Success)?.data?.size
+                                    ?: com.example.data.seed.SeedCatalog.talents.size
                                 HomeScreen(
                                     categories = categories,
                                     featuredInnovations = availableInnovations,
+                                    talentsCount = liveTalentsCount,
+                                    verifiedOrgsCount = verifiedOrganizations.size,
                                     entranceReady = !showOpeningSplash && hasCompletedOnboarding == true,
                                     onOpenDetail = { item ->
                                         StartupSoundPlayer.playTap(context)
@@ -753,6 +948,8 @@ fun Idea2ImpactApp() {
                                     focusedInnovation = focusedInnovation,
                                     useFastModel = useFastAiModel,
                                     canRegenerate = canRegenerateLastReply,
+                                    networkDiagnosticManager = viewModel.networkDiagnosticManager,
+                                    networkDiagnosticState = networkDiagnosticState,
                                     onSelectFocusedInnovation = {
                                         StartupSoundPlayer.playTap(context)
                                         viewModel.setFocusedInnovation(it)
@@ -793,6 +990,11 @@ fun Idea2ImpactApp() {
                                     onSwitchToDefaultAiAndRetry = { messageId ->
                                         StartupSoundPlayer.playTap(context)
                                         viewModel.switchToDefaultAiAndRetry(messageId, isPopup = false)
+                                    },
+                                    onOpenDiagnostics = {
+                                        StartupSoundPlayer.playTap(context)
+                                        showDiagnosticsDialog = true
+                                        viewModel.runConnectivityDiagnostics(context)
                                     },
                                     onResetChat = {
                                         StartupSoundPlayer.playTap(context)
@@ -839,6 +1041,18 @@ fun Idea2ImpactApp() {
                                     onOpenMatches = {
                                         StartupSoundPlayer.playTap(context)
                                         navController.navigate(AppRoute.Matches)
+                                    },
+                                    savedProfiles = savedProfiles,
+                                    savedProfileIds = savedProfileIds,
+                                    onToggleSaveTalent = { talent ->
+                                        StartupSoundPlayer.playSuccess(context)
+                                        viewModel.toggleSaveCollaboratorProfile(talent)
+                                    },
+                                    onMessageTalent = { talent ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.openDirectChatWithTalent(talent) {
+                                            navController.navigate(AppRoute.Messages)
+                                        }
                                     }
                                 )
                             }
@@ -852,6 +1066,11 @@ fun Idea2ImpactApp() {
                                     isRefreshing = isRefreshingDashboard,
                                     incomingProposals = incomingFirestoreProposals,
                                     sentProposals = sentFirestoreProposals,
+                                    ideaPortfolioItems = ideaPortfolioItems,
+                                    ideaPortfolioQuery = ideaPortfolioQuery,
+                                    investorPortfolioItems = investorPortfolioItems,
+                                    investorPortfolioQuery = investorPortfolioQuery,
+                                    investorStatusFilter = investorStatusFilter,
                                     isBusy = isBusy,
                                     onOpenAuth = {
                                         StartupSoundPlayer.playTap(context)
@@ -882,8 +1101,96 @@ fun Idea2ImpactApp() {
                                         StartupSoundPlayer.playTap(context)
                                         navController.navigate(AppRoute.Matches)
                                     },
+                                    diagnosticsReport = diagnosticsReport,
+                                    onRunDiagnostics = {
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.runConnectivityDiagnostics(context)
+                                    },
                                     onRespondToProposal = { propId, accept ->
                                         viewModel.respondToProposal(propId, accept)
+                                    },
+                                    onIdeaPortfolioQueryChange = { viewModel.setIdeaPortfolioQuery(it) },
+                                    onAddIdeaToPortfolio = { title, summary, cat, stage, priority, notes ->
+                                        StartupSoundPlayer.playSuccess(context)
+                                        viewModel.saveCustomIdeaToPortfolio(title, summary, cat, stage, priority, notes)
+                                    },
+                                    onUpdateIdeaNotes = { id, priority, notes ->
+                                        StartupSoundPlayer.playSuccess(context)
+                                        viewModel.updateIdeaPortfolioNotes(id, priority, notes)
+                                    },
+                                    onRemoveIdeaFromPortfolio = { id ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.removeFromIdeaPortfolio(id)
+                                    },
+                                    onOpenIdeaPortfolioItem = { entry ->
+                                        StartupSoundPlayer.playTap(context)
+                                        val linked = entry.innovationId?.let { id ->
+                                            availableInnovations.firstOrNull { it.id == id }
+                                        }
+                                        if (linked != null) {
+                                            viewModel.openInnovationDetail(linked, source = "idea_portfolio")
+                                            navController.navigate(AppRoute.Detail)
+                                        } else {
+                                            viewModel.setFocusedInnovation(entry.toBackendInnovation())
+                                            navigateTopTab(bottomTabs[2])
+                                        }
+                                    },
+                                    onInvestorPortfolioQueryChange = { viewModel.setInvestorPortfolioQuery(it) },
+                                    onInvestorStatusFilterChange = { viewModel.setInvestorStatusFilter(it) },
+                                    onAddInvestorDeal = { title, summary, cat, stage, founder, goal, valEst, status, ticket, notes ->
+                                        StartupSoundPlayer.playSuccess(context)
+                                        viewModel.saveCustomProjectToInvestorPortfolio(
+                                            title, summary, cat, stage, founder, goal, valEst, status, ticket, notes
+                                        )
+                                    },
+                                    onUpdateInvestorDiligence = { id, status, ticket, notes ->
+                                        StartupSoundPlayer.playSuccess(context)
+                                        viewModel.updateInvestorDiligence(id, status, ticket, notes)
+                                    },
+                                    onRemoveInvestorDeal = { id ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.removeFromInvestorPortfolio(id)
+                                    },
+                                    onOpenInvestorPortfolioItem = { deal ->
+                                        StartupSoundPlayer.playTap(context)
+                                        val linked = deal.innovationId?.let { id ->
+                                            availableInnovations.firstOrNull { it.id == id }
+                                        }
+                                        if (linked != null) {
+                                            viewModel.openInnovationDetail(linked, source = "investor_portfolio")
+                                            navController.navigate(AppRoute.Detail)
+                                        } else {
+                                            viewModel.setFocusedInnovation(deal.toBackendInnovation())
+                                            navigateTopTab(bottomTabs[2])
+                                        }
+                                    },
+                                    savedProfiles = savedProfiles,
+                                    savedProfilesQuery = savedProfilesQuery,
+                                    onSavedProfilesQueryChange = { viewModel.setSavedProfilesQuery(it) },
+                                    onRemoveSavedProfile = { id ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.removeSavedCollaboratorProfile(id)
+                                    },
+                                    onBrowseCollaborators = {
+                                        StartupSoundPlayer.playTap(context)
+                                        navigateTopTab(bottomTabs[3])
+                                    },
+                                    onMessageSavedProfile = { profile ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.openDirectChatWithTalent(profile.toBackendTalent()) {
+                                            navController.navigate(AppRoute.Messages)
+                                        }
+                                    },
+                                    unreadMessagesCount = unreadMessagesCount,
+                                    collaborationsCount = collaborations.size,
+                                    pendingInvitesCount = pendingInvitesCount,
+                                    onOpenMessages = {
+                                        StartupSoundPlayer.playTap(context)
+                                        navController.navigate(AppRoute.Messages)
+                                    },
+                                    onOpenCollaborations = {
+                                        StartupSoundPlayer.playTap(context)
+                                        navController.navigate(AppRoute.Collaborations)
                                     },
                                     onSignOut = {
                                         StartupSoundPlayer.playTap(context)
@@ -910,6 +1217,8 @@ fun Idea2ImpactApp() {
                                         signedNda = signedNdas[detail.id],
                                         pitchDeckState = pitchDeckState,
                                         isBusy = isBusy,
+                                        isInIdeaPortfolio = ideaPortfolioIds.contains(detail.id),
+                                        isInInvestorPortfolio = investorPortfolioIds.contains(detail.id),
                                         onBack = {
                                             StartupSoundPlayer.playTap(context)
                                             navController.popBackStack()
@@ -921,6 +1230,14 @@ fun Idea2ImpactApp() {
                                         onToggleBookmark = {
                                             StartupSoundPlayer.playSuccess(context)
                                             viewModel.toggleBookmark(detail)
+                                        },
+                                        onToggleIdeaPortfolio = {
+                                            StartupSoundPlayer.playSuccess(context)
+                                            viewModel.toggleSaveToIdeaPortfolio(detail)
+                                        },
+                                        onToggleInvestorPortfolio = {
+                                            StartupSoundPlayer.playSuccess(context)
+                                            viewModel.toggleSaveToInvestorPortfolio(detail)
                                         },
                                         onPostComment = { text, onDone ->
                                             viewModel.postComment(detail.id, text) {
@@ -952,6 +1269,12 @@ fun Idea2ImpactApp() {
                                             StartupSoundPlayer.playTap(context)
                                             viewModel.setFocusedInnovation(detail)
                                             navController.navigate(AppRoute.Matches)
+                                        },
+                                        onMessageCreator = {
+                                            StartupSoundPlayer.playTap(context)
+                                            viewModel.openDirectChatWithInnovationCreator(detail) {
+                                                navController.navigate(AppRoute.Messages)
+                                            }
                                         }
                                     )
                                 } else {
@@ -999,11 +1322,214 @@ fun Idea2ImpactApp() {
                                 )
                             }
                         }
+
+                        composable<AppRoute.Messages> {
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this@composable) {
+                                BackHandler { navController.popBackStack() }
+                                val allTalents = (talentsState as? UiState.Success)?.data.orEmpty()
+                                MessagesScreen(
+                                    isSignedIn = currentUser != null && firebaseUid != null,
+                                    myUid = firebaseUid.orEmpty(),
+                                    conversations = conversations,
+                                    activeConversation = activeConversation,
+                                    messages = activeMessages,
+                                    availableTalents = allTalents,
+                                    availableInnovations = availableInnovations,
+                                    pendingInvitesCount = pendingInvitesCount,
+                                    isBusy = isBusy,
+                                    onBack = {
+                                        StartupSoundPlayer.playTap(context)
+                                        navController.popBackStack()
+                                    },
+                                    onOpenAuth = {
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.openAuthModal()
+                                    },
+                                    onSelectConversation = { id ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.selectConversation(id)
+                                    },
+                                    onMarkActiveRead = { viewModel.markActiveConversationRead() },
+                                    onStartDirectChat = { talent ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.openDirectChatWithTalent(talent)
+                                    },
+                                    onCreateGroupChat = { title, members ->
+                                        StartupSoundPlayer.playSuccess(context)
+                                        viewModel.createGroupChat(title, members)
+                                    },
+                                    onSendMessage = { body, type, replyTo, aName, aMime, aSize, aPreview, aUrl, sharedInn ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.sendChatMessage(
+                                            body = body,
+                                            messageType = type,
+                                            replyTo = replyTo,
+                                            attachmentName = aName,
+                                            attachmentMimeType = aMime,
+                                            attachmentSizeBytes = aSize,
+                                            attachmentPreviewBase64 = aPreview,
+                                            attachmentUrl = aUrl,
+                                            sharedInnovation = sharedInn
+                                        )
+                                    },
+                                    onEditMessage = { msgId, newBody ->
+                                        viewModel.editChatMessage(msgId, newBody)
+                                    },
+                                    onDeleteMessage = { msgId ->
+                                        viewModel.deleteChatMessage(msgId)
+                                    },
+                                    onToggleReaction = { msg, emoji ->
+                                        viewModel.toggleChatReaction(msg, emoji)
+                                    },
+                                    onSetTyping = { typing ->
+                                        viewModel.setTypingIndicator(typing)
+                                    },
+                                    onTogglePin = { viewModel.togglePinConversation(it) },
+                                    onToggleMute = { viewModel.toggleMuteConversation(it) },
+                                    onToggleArchive = { viewModel.toggleArchiveConversation(it) },
+                                    onAddGroupMember = { viewModel.addMemberToActiveGroup(it) },
+                                    onRemoveGroupMember = { viewModel.removeMemberFromActiveGroup(it) },
+                                    onLeaveGroup = { viewModel.leaveActiveGroup() },
+                                    onToggleBlockPeer = { viewModel.toggleBlockPeerInActiveChat() },
+                                    onReportPeer = { reason, details ->
+                                        viewModel.reportActiveConversationPeer(reason, details)
+                                    },
+                                    onOpenCollaborationsHub = {
+                                        StartupSoundPlayer.playTap(context)
+                                        navController.navigate(AppRoute.Collaborations)
+                                    },
+                                    onOpenCollaborationWorkspace = { projectId ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.selectCollaborationProject(projectId)
+                                        navController.navigate(AppRoute.CollaborationWorkspace)
+                                    },
+                                    onCreateCollaboration = { draft ->
+                                        StartupSoundPlayer.playSuccess(context)
+                                        viewModel.createCollaborationFromDraft(draft) { _, _ ->
+                                            navController.navigate(AppRoute.CollaborationWorkspace)
+                                        }
+                                    },
+                                    onOpenInnovation = { innId ->
+                                        val match = availableInnovations.firstOrNull { it.id == innId }
+                                        if (match != null) {
+                                            StartupSoundPlayer.playTap(context)
+                                            viewModel.openInnovationDetail(match, source = "chat_share")
+                                            navController.navigate(AppRoute.Detail)
+                                        } else {
+                                            viewModel.showMessage("Innovation listing not in local cache.")
+                                        }
+                                    },
+                                    onNotifySnackbar = { msg -> viewModel.showMessage(msg) }
+                                )
+                            }
+                        }
+
+                        composable<AppRoute.Collaborations> {
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this@composable) {
+                                BackHandler { navController.popBackStack() }
+                                val allTalents = (talentsState as? UiState.Success)?.data.orEmpty()
+                                CollaborationsScreen(
+                                    isSignedIn = currentUser != null && firebaseUid != null,
+                                    projects = collaborations,
+                                    incomingInvites = incomingCollabInvites,
+                                    availableInnovations = availableInnovations,
+                                    availableTalents = allTalents,
+                                    isBusy = isBusy,
+                                    onBack = {
+                                        StartupSoundPlayer.playTap(context)
+                                        navController.popBackStack()
+                                    },
+                                    onOpenAuth = {
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.openAuthModal()
+                                    },
+                                    onOpenProjectWorkspace = { project ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.selectCollaborationProject(project.id)
+                                        navController.navigate(AppRoute.CollaborationWorkspace)
+                                    },
+                                    onRespondToInvite = { invite, accept ->
+                                        viewModel.respondToCollaborationInvite(invite, accept) { projectId ->
+                                            viewModel.selectCollaborationProject(projectId)
+                                            navController.navigate(AppRoute.CollaborationWorkspace)
+                                        }
+                                    },
+                                    onCreateCollaboration = { draft ->
+                                        StartupSoundPlayer.playSuccess(context)
+                                        viewModel.createCollaborationFromDraft(draft) { _, _ ->
+                                            navController.navigate(AppRoute.CollaborationWorkspace)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+
+                        composable<AppRoute.CollaborationWorkspace> {
+                            CompositionLocalProvider(LocalNavAnimatedVisibilityScope provides this@composable) {
+                                BackHandler { navController.popBackStack() }
+                                val allTalents = (talentsState as? UiState.Success)?.data.orEmpty()
+                                CollaborationWorkspaceScreen(
+                                    project = activeProject,
+                                    myUid = firebaseUid.orEmpty(),
+                                    tasks = activeProjectTasks,
+                                    files = activeProjectFiles,
+                                    activity = activeProjectActivity,
+                                    activeTaskComments = activeTaskComments,
+                                    availableTalents = allTalents,
+                                    isBusy = isBusy,
+                                    onBack = {
+                                        StartupSoundPlayer.playTap(context)
+                                        navController.popBackStack()
+                                    },
+                                    onOpenProjectChat = { convId ->
+                                        StartupSoundPlayer.playTap(context)
+                                        viewModel.selectConversation(convId)
+                                        navController.navigate(AppRoute.Messages)
+                                    },
+                                    onUpdateProjectStatus = { viewModel.updateCollaborationStatus(it) },
+                                    onPostUpdate = { viewModel.postProjectUpdate(it) },
+                                    onCreateTask = { title, desc, aUid, aName, priority, dueMs, attach ->
+                                        viewModel.createProjectTask(title, desc, aUid, aName, priority, dueMs, attach)
+                                    },
+                                    onUpdateTaskStatus = { task, status ->
+                                        viewModel.updateProjectTaskStatus(task, status)
+                                    },
+                                    onDeleteTask = { viewModel.deleteProjectTask(it) },
+                                    onSelectTaskForComments = { viewModel.selectTaskForComments(it) },
+                                    onAddTaskComment = { task, body ->
+                                        viewModel.addProjectTaskComment(task, body)
+                                    },
+                                    onUploadFile = { fName, mime, size, refUrl, preview, notes ->
+                                        viewModel.uploadProjectFile(fName, mime, size, refUrl, preview, notes)
+                                    },
+                                    onDeleteFile = { viewModel.deleteProjectFile(it) },
+                                    onInviteMember = { talent, role, msg ->
+                                        viewModel.inviteCollaboratorToActiveProject(talent, role, msg)
+                                    },
+                                    onUpdateMemberRole = { uid, role ->
+                                        viewModel.updateCollaborationMemberRole(uid, role)
+                                    },
+                                    onRemoveMember = { viewModel.removeCollaborationMember(it) },
+                                    onLeaveProject = {
+                                        viewModel.leaveActiveCollaboration {
+                                            navController.popBackStack()
+                                        }
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            if (!showOpeningSplash && hasCompletedOnboarding == true && !currentRouteName.contains("Copilot") && !showAuthModal) {
+            if (
+                !showOpeningSplash &&
+                hasCompletedOnboarding == true &&
+                !currentRouteName.contains("Copilot") &&
+                !currentRouteName.contains("Messages") &&
+                !currentRouteName.contains("CollaborationWorkspace") &&
+                !showAuthModal
+            ) {
                 MovableAiPopup(
                     isExpanded = isAiPopupExpanded,
                     onExpandedChange = { expanded ->
@@ -1017,6 +1543,8 @@ fun Idea2ImpactApp() {
                     canRegenerate = canRegenerateLastReply,
                     useFastModel = useFastAiModel,
                     activeContext = focusedInnovation ?: selectedDetail,
+                    networkDiagnosticManager = viewModel.networkDiagnosticManager,
+                    networkDiagnosticState = networkDiagnosticState,
                     onToggleFastModel = {
                         StartupSoundPlayer.playTap(context)
                         viewModel.setFastAiModel(it, surface = "floating_popup")
@@ -1049,6 +1577,11 @@ fun Idea2ImpactApp() {
                         StartupSoundPlayer.playTap(context)
                         viewModel.switchToDefaultAiAndRetry(messageId, isPopup = true)
                     },
+                    onOpenDiagnostics = {
+                        StartupSoundPlayer.playTap(context)
+                        showDiagnosticsDialog = true
+                        viewModel.runConnectivityDiagnostics(context)
+                    },
                     onOpenFullCopilot = {
                         isAiPopupExpanded = false
                         navigateTopTab(bottomTabs[2])
@@ -1065,13 +1598,33 @@ fun Idea2ImpactApp() {
                         hapticManager.tap()
                         StartupSoundPlayer.playTap(context)
                         viewModel.markNotificationRead(alert.id)
-                        val targetId = alert.innovationId
-                        if (!targetId.isNullOrBlank()) {
-                            val match = availableInnovations.firstOrNull { it.id == targetId }
-                            if (match != null) {
+                        when {
+                            alert.targetRoute == "messages" && !alert.targetId.isNullOrBlank() -> {
+                                viewModel.selectConversation(alert.targetId)
                                 showNotificationsSheet = false
-                                viewModel.openInnovationDetail(match, source = "notification")
-                                navController.navigate(AppRoute.Detail)
+                                navController.navigate(AppRoute.Messages)
+                            }
+                            alert.targetRoute == "collaborations" -> {
+                                val pid = alert.targetId
+                                if (!pid.isNullOrBlank() && collaborations.any { it.id == pid }) {
+                                    viewModel.selectCollaborationProject(pid)
+                                    showNotificationsSheet = false
+                                    navController.navigate(AppRoute.CollaborationWorkspace)
+                                } else {
+                                    showNotificationsSheet = false
+                                    navController.navigate(AppRoute.Collaborations)
+                                }
+                            }
+                            else -> {
+                                val targetId = alert.innovationId
+                                if (!targetId.isNullOrBlank()) {
+                                    val match = availableInnovations.firstOrNull { it.id == targetId }
+                                    if (match != null) {
+                                        showNotificationsSheet = false
+                                        viewModel.openInnovationDetail(match, source = "notification")
+                                        navController.navigate(AppRoute.Detail)
+                                    }
+                                }
                             }
                         }
                     },
@@ -1096,6 +1649,14 @@ fun Idea2ImpactApp() {
                         viewModel.refreshMarketplace()
                         viewModel.loadDashboardStats(isPullRefresh = true)
                     }
+                )
+            }
+
+            if (showDiagnosticsDialog && !showOpeningSplash && hasCompletedOnboarding == true) {
+                FirebaseDiagnosticsDialog(
+                    report = diagnosticsReport,
+                    onRunDiagnostics = { viewModel.runConnectivityDiagnostics(context) },
+                    onDismiss = { showDiagnosticsDialog = false }
                 )
             }
 

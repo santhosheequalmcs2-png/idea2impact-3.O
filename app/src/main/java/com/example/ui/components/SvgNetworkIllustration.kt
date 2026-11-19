@@ -282,11 +282,11 @@ fun HeroIllustration(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Layered Lottie Global Innovation Exchange + Interactive 3D Geodesic Exchange Globe + Floating Pill
+            // Unobstructed 3D Geodesic Exchange Globe Stage + Clean Hub Pill
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(212.dp),
+                    .height(206.dp),
                 contentAlignment = Alignment.Center
             ) {
                 GlobalExchangeLottieStage(
@@ -304,33 +304,23 @@ fun HeroIllustration(
                     },
                     transparentStage = true,
                     showOverlayPills = false,
-                    stageHeight = 204.dp,
+                    stageHeight = 200.dp,
                     modifier = Modifier.fillMaxSize()
                 )
 
-                // Top-Right Staggered AI Opportunity Floating Badge
-                HeroFloatingBadgeChip(
-                    iconRes = R.drawable.ic_brand_spark_badge,
-                    iconBg = PurpleGlow.copy(alpha = 0.16f),
-                    title = "AI Opportunity & IP Match",
-                    subtitle = "98% Compatibility · CleanTech",
-                    trailingPulse = true,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .widthIn(max = 228.dp)
-                )
-
-                // Bottom-Start Hub Live Indicator
+                // Clean Bottom-Start Hub Live Indicator (no text colliding over sphere top)
                 Surface(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.90f),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)),
                     shape = RoundedCornerShape(50),
-                    modifier = Modifier.align(Alignment.BottomStart)
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(6.dp)
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Box(
                             modifier = Modifier
@@ -350,56 +340,61 @@ fun HeroIllustration(
                 }
             }
 
-            // Staggered Trust Cards matching web hero right column
+            // Clean, aligned Trust Cards below the 3D sphere stage
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-                    HeroFloatingBadgeChip(
-                        iconRes = R.drawable.ic_nda_shield_badge,
-                        iconBg = CobaltBlue.copy(alpha = 0.14f),
-                        title = "Mutual NDA Protected",
-                        subtitle = "Zero-knowledge encrypted deal rooms",
-                        modifier = Modifier.fillMaxWidth(0.92f)
-                    )
-                }
-                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-                    HeroFloatingBadgeChip(
-                        iconRes = R.drawable.ic_patent_growth_badge,
-                        iconBg = ElectricCyan.copy(alpha = 0.14f),
-                        title = "Provisional Patent Secured",
-                        subtitle = "USPTO Priority Date Locked",
-                        trailingVerified = true,
-                        modifier = Modifier.fillMaxWidth(0.92f)
-                    )
-                }
+                HeroFloatingBadgeChip(
+                    iconRes = R.drawable.ic_brand_spark_badge,
+                    iconBg = PurpleGlow.copy(alpha = 0.14f),
+                    title = "AI Opportunity & IP Match",
+                    subtitle = "AI Sana readiness & compatibility scan",
+                    trailingPulse = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                HeroFloatingBadgeChip(
+                    iconRes = R.drawable.ic_nda_shield_badge,
+                    iconBg = CobaltBlue.copy(alpha = 0.14f),
+                    title = "Mutual NDA & Priority Vault",
+                    subtitle = "USPTO-aligned disclosures & protected rooms",
+                    trailingVerified = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
 
-            // Website-exact "INVENT · PROTECT · FUND · SCALE" brand ribbon
+            // Single-line "INVENT · PROTECT · FUND · SCALE" brand ribbon
             Surface(
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.75f)),
-                shape = RoundedCornerShape(50)
+                shape = RoundedCornerShape(50),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally)
                 ) {
                     listOf("INVENT", "PROTECT", "FUND", "SCALE").forEachIndexed { idx, word ->
                         Text(
                             text = word,
-                            style = MaterialTheme.typography.labelSmall,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 10.sp,
+                                letterSpacing = 0.25.sp
+                            ),
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            softWrap = false
                         )
                         if (idx < 3) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_brand_spark_badge),
                                 contentDescription = null,
                                 tint = Color.Unspecified,
-                                modifier = Modifier.size(11.dp)
+                                modifier = Modifier.size(10.dp)
                             )
                         }
                     }

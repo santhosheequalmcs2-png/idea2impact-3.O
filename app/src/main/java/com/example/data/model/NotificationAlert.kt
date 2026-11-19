@@ -6,7 +6,10 @@ import kotlinx.serialization.Serializable
 enum class NotificationType {
     PROPOSAL,
     LIKE,
-    PLATFORM_UPDATE
+    PLATFORM_UPDATE,
+    MESSAGE,
+    COLLABORATION,
+    TASK
 }
 
 @Serializable
@@ -17,5 +20,7 @@ data class NotificationAlert(
     val message: String,
     val createdAtEpochMs: Long,
     val isRead: Boolean = false,
-    val innovationId: String? = null
+    val innovationId: String? = null,
+    val targetRoute: String? = null,
+    val targetId: String? = null
 )

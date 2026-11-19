@@ -862,13 +862,14 @@ fun NeuralCore3D(
 fun BuilderConstellation3D(
     selectedRole: String,
     onCycleRole: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    height: Dp = 178.dp
 ) {
     WebsiteStyle3DStage(
         badgeText = "Role: $selectedRole · Tap cluster",
         accent = CobaltBlue,
         testTag = "talents_3d_constellation",
-        height = 178.dp,
+        height = height,
         spinSpeed = 0.38f,
         initialYaw = 0.25f,
         initialPitch = 0.32f,

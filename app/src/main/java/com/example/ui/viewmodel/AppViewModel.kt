@@ -1,11 +1,15 @@
 package com.example.ui.viewmodel
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.analytics.AnalyticsTracker
 import com.example.analytics.NoOpAnalyticsTracker
+import com.example.data.local.IdeaPortfolioEntity
+import com.example.data.local.InvestorPortfolioEntity
+import com.example.data.local.SavedProfileEntity
 import com.example.data.model.AiFailureCategory
 import com.example.data.model.AiRequestPhase
 import com.example.data.model.AiStatusUiState
@@ -13,18 +17,38 @@ import com.example.data.model.AuthUser
 import com.example.data.model.BackendComment
 import com.example.data.model.BackendInnovation
 import com.example.data.model.BackendTalent
+import com.example.data.model.BlockedUserRecord
 import com.example.data.model.CategoryItem
+import com.example.data.model.ChatMessage
+import com.example.data.model.CloudNotification
+import com.example.data.model.CollaborationActivity
+import com.example.data.model.CollaborationFile
+import com.example.data.model.CollaborationInvitation
+import com.example.data.model.CollaborationProject
+import com.example.data.model.CollaborationStatus
+import com.example.data.model.CollaborationTask
+import com.example.data.model.ConversationContextType
+import com.example.data.model.ConversationUiItem
 import com.example.data.model.CopilotMessage
 import com.example.data.model.DashboardStats
 import com.example.data.model.DigitalNdaRecord
 import com.example.data.model.EcosystemMatchResult
 import com.example.data.model.ExactCategories
+import com.example.data.model.InvitationStatus
+import com.example.data.model.MessageType
 import com.example.data.model.NotificationAlert
+import com.example.data.model.NotificationType
 import com.example.data.model.PitchDeckResult
 import com.example.data.model.Proposal
 import com.example.data.model.ShareIdeaScope
+import com.example.data.model.StartCollaborationDraft
 import com.example.data.model.TalentProfile
+import com.example.data.model.TaskComment
+import com.example.data.model.TaskPriority
+import com.example.data.model.TaskStatus
 import com.example.data.model.UiState
+import com.example.data.model.UserConversationPref
+import com.example.data.model.UserPresence
 import com.example.data.model.UserProfile
 import com.example.data.model.VerifiedOrganization
 import com.example.data.preferences.NotificationLocalDataStore
@@ -33,10 +57,17 @@ import com.example.data.preferences.TokenManager
 import com.example.data.repository.AiCopilotRepository
 import com.example.data.repository.BackendApiException
 import com.example.data.repository.BackendRepository
+import com.example.data.repository.ChatPeerDescriptor
+import com.example.data.repository.CollaborationRepository
 import com.example.data.repository.EcosystemMatcher
 import com.example.data.repository.EcosystemRepository
 import com.example.data.repository.IdeaRepository
+import com.example.data.repository.MessagingRepository
+import com.example.data.repository.PortfolioRepository
 import com.example.data.repository.SanaPromptEngine
+import com.example.util.FirebaseDiagnosticsReport
+import com.example.util.NetworkDiagnosticManager
+import com.example.util.NetworkDiagnosticState
 import com.example.util.SecurityCryptoUtils
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseUser
@@ -71,7 +102,12 @@ class AppViewModel(
     private val notificationDataStore: NotificationLocalDataStore? = null,
     private val analyticsTracker: AnalyticsTracker = NoOpAnalyticsTracker,
     private val ecosystemRepository: EcosystemRepository? = null,
-    private val ideaRepository: IdeaRepository? = null
+    private val ideaRepository: IdeaRepository? = null,
+    private val appContext: Context? = null,
+    val networkDiagnosticManager: NetworkDiagnosticManager = NetworkDiagnosticManager.getInstance(appContext),
+    private val portfolioRepository: PortfolioRepository? = null,
+    private val messagingRepository: MessagingRepository? = null,
+    private val collaborationRepository: CollaborationRepository? = null
 ) : ViewModel() {
 
     val isDarkTheme: StateFlow<Boolean> = themePreferences.isDarkTheme
@@ -82,17 +118,31 @@ class AppViewModel(
     val hasCompletedOnboarding: StateFlow<Boolean?> = themePreferences.hasCompletedOnboarding
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
-    val notifications: StateFlow<List<NotificationAlert>> = (notificationDataStore?.alerts ?: flowOf(emptyList()))
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
-
-    val unreadNotificationsCount: StateFlow<Int> = (notificationDataStore?.unreadCount ?: flowOf(0))
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), 0)
-
     private val _currentUser = MutableStateFlow<AuthUser?>(null)
     val currentUser: StateFlow<AuthUser?> = _currentUser.asStateFlow()
 
     private val _firebaseUid = MutableStateFlow<String?>(runCatching { Firebase.auth.currentUser?.uid }.getOrNull())
     val firebaseUid: StateFlow<String?> = _firebaseUid.asStateFlow()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val cloudNotifications: StateFlow<List<CloudNotification>> = _firebaseUid
+        .flatMapLatest { uid ->
+            if (uid != null && messagingRepository != null) {
+                messagingRepository.observeCloudNotifications(uid).map { it }
+            } else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    val notifications: StateFlow<List<NotificationAlert>> = combine(
+        notificationDataStore?.alerts ?: flowOf(emptyList()),
+        cloudNotifications
+    ) { localAlerts, cloudAlerts ->
+        mergeNotificationAlerts(localAlerts, cloudAlerts)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    val unreadNotificationsCount: StateFlow<Int> = notifications
+        .map { list -> list.count { !it.isRead } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), 0)
 
     private val _showAuthModal = MutableStateFlow(false)
     val showAuthModal: StateFlow<Boolean> = _showAuthModal.asStateFlow()
@@ -285,6 +335,51 @@ class AppViewModel(
     private val _isRefreshingDashboard = MutableStateFlow(false)
     val isRefreshingDashboard: StateFlow<Boolean> = _isRefreshingDashboard.asStateFlow()
 
+    private val _ideaPortfolioQuery = MutableStateFlow("")
+    val ideaPortfolioQuery: StateFlow<String> = _ideaPortfolioQuery.asStateFlow()
+
+    private val _investorPortfolioQuery = MutableStateFlow("")
+    val investorPortfolioQuery: StateFlow<String> = _investorPortfolioQuery.asStateFlow()
+
+    private val _investorStatusFilter = MutableStateFlow("All")
+    val investorStatusFilter: StateFlow<String> = _investorStatusFilter.asStateFlow()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val ideaPortfolioItems: StateFlow<List<IdeaPortfolioEntity>> = _ideaPortfolioQuery
+        .flatMapLatest { q ->
+            portfolioRepository?.observeIdeaPortfolio(q) ?: flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    val ideaPortfolioIds: StateFlow<Set<String>> = (portfolioRepository?.observeIdeaPortfolioIds() ?: flowOf(emptySet()))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptySet())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val investorPortfolioItems: StateFlow<List<InvestorPortfolioEntity>> = combine(
+        _investorPortfolioQuery,
+        _investorStatusFilter
+    ) { q, status -> q to status }
+        .flatMapLatest { (q, status) ->
+            portfolioRepository?.observeInvestorPortfolio(query = q, statusFilter = status) ?: flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    val investorPortfolioIds: StateFlow<Set<String>> = (portfolioRepository?.observeInvestorPortfolioIds() ?: flowOf(emptySet()))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptySet())
+
+    private val _savedProfilesQuery = MutableStateFlow("")
+    val savedProfilesQuery: StateFlow<String> = _savedProfilesQuery.asStateFlow()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val savedProfiles: StateFlow<List<SavedProfileEntity>> = _savedProfilesQuery
+        .flatMapLatest { q ->
+            portfolioRepository?.observeSavedProfiles(q) ?: flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    val savedProfileIds: StateFlow<Set<String>> = (portfolioRepository?.observeSavedProfileIds() ?: flowOf(emptySet()))
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptySet())
+
     val availableInnovations: StateFlow<List<BackendInnovation>> = repository.observeCachedInnovations()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
@@ -315,6 +410,179 @@ class AppViewModel(
     private val _snackbarMessage = MutableStateFlow<String?>(null)
     val snackbarMessage: StateFlow<String?> = _snackbarMessage.asStateFlow()
 
+    val networkDiagnosticState: StateFlow<NetworkDiagnosticState> = networkDiagnosticManager.state
+    val diagnosticsReport: StateFlow<FirebaseDiagnosticsReport> = networkDiagnosticManager.diagnosticsReport
+
+    // --- Real-Time Messaging & Collaborations StateFlows ---
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val peerPresences: StateFlow<Map<String, UserPresence>> = _firebaseUid
+        .flatMapLatest { uid ->
+            if (uid != null && messagingRepository != null) messagingRepository.observeAllPresence()
+            else flowOf(emptyMap())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyMap())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val rawConversations = _firebaseUid
+        .flatMapLatest { uid ->
+            if (uid != null && messagingRepository != null) messagingRepository.observeConversations(uid)
+            else flowOf(emptyList())
+        }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val conversationPrefs = _firebaseUid
+        .flatMapLatest { uid ->
+            if (uid != null && messagingRepository != null) messagingRepository.observeConversationPrefs(uid)
+            else flowOf(emptyMap())
+        }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val blockedUsersList: StateFlow<List<BlockedUserRecord>> = _firebaseUid
+        .flatMapLatest { uid ->
+            if (uid != null && messagingRepository != null) messagingRepository.observeBlockedUsers(uid)
+            else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    val blockedUserIds: StateFlow<Set<String>> = blockedUsersList
+        .map { list -> list.map { it.blockedUid.ifBlank { it.id } }.toSet() }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptySet())
+
+    val conversations: StateFlow<List<ConversationUiItem>> = combine(
+        _firebaseUid,
+        rawConversations,
+        conversationPrefs,
+        peerPresences,
+        blockedUserIds
+    ) { myUid, convs, prefs, presences, blockedSet ->
+        if (myUid == null) emptyList()
+        else {
+            convs.map { conv ->
+                val pref = prefs[conv.id] ?: UserConversationPref(userId = myUid, conversationId = conv.id)
+                val peerUid = conv.peerUidFor(myUid)
+                val presence = peerUid?.let { presences[it] }
+                val isBlocked = peerUid != null && blockedSet.contains(peerUid)
+                ConversationUiItem(
+                    conversation = conv,
+                    pref = pref,
+                    peerPresence = presence,
+                    isPeerBlocked = isBlocked
+                )
+            }.sortedWith(
+                compareByDescending<ConversationUiItem> { it.pref.pinned }
+                    .thenByDescending { it.conversation.lastMessageAt?.toDate()?.time ?: 0L }
+            )
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    val unreadMessagesCount: StateFlow<Int> = combine(_firebaseUid, conversations) { uid, items ->
+        if (uid == null) 0
+        else items.filter { !it.pref.archived && !it.pref.muted }
+            .sumOf { it.conversation.unreadFor(uid) }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), 0)
+
+    private val _activeConversationId = MutableStateFlow<String?>(null)
+    val activeConversationId: StateFlow<String?> = _activeConversationId.asStateFlow()
+
+    val activeConversation: StateFlow<ConversationUiItem?> = combine(
+        conversations,
+        _activeConversationId
+    ) { list, activeId ->
+        activeId?.let { id -> list.firstOrNull { it.conversation.id == id } }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val activeMessages: StateFlow<List<ChatMessage>> = combine(
+        _activeConversationId,
+        _firebaseUid
+    ) { convId, uid -> convId to uid }
+        .flatMapLatest { (convId, uid) ->
+            if (convId != null && uid != null && messagingRepository != null) {
+                messagingRepository.observeMessages(convId, uid)
+            } else {
+                flowOf(emptyList())
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val collaborations: StateFlow<List<CollaborationProject>> = _firebaseUid
+        .flatMapLatest { uid ->
+            if (uid != null && collaborationRepository != null) collaborationRepository.observeMyProjects(uid)
+            else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val incomingCollabInvites: StateFlow<List<CollaborationInvitation>> = _firebaseUid
+        .flatMapLatest { uid ->
+            if (uid != null && collaborationRepository != null) collaborationRepository.observeIncomingInvitations(uid)
+            else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val sentCollabInvites: StateFlow<List<CollaborationInvitation>> = _firebaseUid
+        .flatMapLatest { uid ->
+            if (uid != null && collaborationRepository != null) collaborationRepository.observeSentInvitations(uid)
+            else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    val pendingInvitesCount: StateFlow<Int> = incomingCollabInvites
+        .map { list -> list.count { it.parsedStatus() == InvitationStatus.PENDING } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), 0)
+
+    private val _activeProjectId = MutableStateFlow<String?>(null)
+    val activeProjectId: StateFlow<String?> = _activeProjectId.asStateFlow()
+
+    val activeProject: StateFlow<CollaborationProject?> = combine(
+        collaborations,
+        _activeProjectId
+    ) { projects, id ->
+        id?.let { pid -> projects.firstOrNull { it.id == pid } }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), null)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val activeProjectTasks: StateFlow<List<CollaborationTask>> = combine(_activeProjectId, _firebaseUid) { pid, uid -> pid to uid }
+        .flatMapLatest { (pid, uid) ->
+            if (pid != null && uid != null && collaborationRepository != null) {
+                collaborationRepository.observeProjectTasks(pid, uid)
+            } else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val activeProjectFiles: StateFlow<List<CollaborationFile>> = combine(_activeProjectId, _firebaseUid) { pid, uid -> pid to uid }
+        .flatMapLatest { (pid, uid) ->
+            if (pid != null && uid != null && collaborationRepository != null) {
+                collaborationRepository.observeProjectFiles(pid, uid)
+            } else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val activeProjectActivity: StateFlow<List<CollaborationActivity>> = combine(_activeProjectId, _firebaseUid) { pid, uid -> pid to uid }
+        .flatMapLatest { (pid, uid) ->
+            if (pid != null && uid != null && collaborationRepository != null) {
+                collaborationRepository.observeProjectActivity(pid, uid)
+            } else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    private val _activeTaskId = MutableStateFlow<String?>(null)
+    val activeTaskId: StateFlow<String?> = _activeTaskId.asStateFlow()
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val activeTaskComments: StateFlow<List<TaskComment>> = combine(_activeProjectId, _activeTaskId, _firebaseUid) { pid, tid, uid ->
+        Triple(pid, tid, uid)
+    }.flatMapLatest { (pid, tid, uid) ->
+        if (pid != null && tid != null && uid != null && collaborationRepository != null) {
+            collaborationRepository.observeTaskComments(pid, tid, uid)
+        } else flowOf(emptyList())
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
     private var searchJob: Job? = null
     private var innovationsJob: Job? = null
     private var talentsJob: Job? = null
@@ -335,6 +603,22 @@ class AppViewModel(
     init {
         viewModelScope.launch {
             notificationDataStore?.ensureSeeded()
+        }
+        if (appContext != null) {
+            networkDiagnosticManager.startMonitoring(appContext)
+            viewModelScope.launch {
+                runCatching { networkDiagnosticManager.checkConnectivity(appContext) }
+            }
+        }
+        if (_firebaseUid.value != null) {
+            viewModelScope.launch {
+                val fb = Firebase.auth.currentUser
+                messagingRepository?.updateMyPresence(
+                    online = true,
+                    displayName = fb?.displayName ?: _currentUser.value?.name ?: "Innovator",
+                    role = _currentUser.value?.role ?: "Creator"
+                )
+            }
         }
         refreshAllInitialData()
     }
@@ -400,25 +684,38 @@ class AppViewModel(
 
     fun markNotificationRead(alertId: String) {
         viewModelScope.launch {
-            notificationDataStore?.markAsRead(alertId)
+            if (alertId.startsWith("cloud_")) {
+                messagingRepository?.markCloudNotificationRead(alertId.removePrefix("cloud_"))
+            } else {
+                notificationDataStore?.markAsRead(alertId)
+            }
         }
     }
 
     fun markAllNotificationsRead() {
         viewModelScope.launch {
             notificationDataStore?.markAllRead()
+            val unreadCloud = cloudNotifications.value.filter { !it.read }.map { it.id }
+            messagingRepository?.markAllCloudNotificationsRead(unreadCloud)
         }
     }
 
     fun deleteNotification(alertId: String) {
         viewModelScope.launch {
-            notificationDataStore?.deleteAlert(alertId)
+            if (alertId.startsWith("cloud_")) {
+                messagingRepository?.deleteCloudNotification(alertId.removePrefix("cloud_"))
+            } else {
+                notificationDataStore?.deleteAlert(alertId)
+            }
         }
     }
 
     fun clearAllNotifications() {
         viewModelScope.launch {
             notificationDataStore?.clearAll()
+            cloudNotifications.value.forEach { n ->
+                messagingRepository?.deleteCloudNotification(n.id)
+            }
         }
     }
 
@@ -452,6 +749,18 @@ class AppViewModel(
 
     fun showMessage(msg: String) {
         _snackbarMessage.value = msg
+    }
+
+    fun runConnectivityDiagnostics(context: Context? = appContext) {
+        if (networkDiagnosticManager.state.value.isChecking) return
+        val resolvedContext = context ?: appContext
+        viewModelScope.launch {
+            runCatching {
+                networkDiagnosticManager.checkConnectivity(resolvedContext)
+            }.onFailure { e ->
+                if (e is CancellationException) throw e
+            }
+        }
     }
 
     // --- Auth ---
@@ -531,15 +840,34 @@ class AppViewModel(
                 if (e is CancellationException) throw e
                 Log.w(TAG, "Firestore user bootstrap skipped/deferred: ${e.message}")
             }
+            runCatching {
+                messagingRepository?.updateMyPresence(
+                    online = true,
+                    displayName = authUser.name,
+                    role = myFirestoreProfile.value?.role ?: authUser.role
+                )
+            }
         }
         loadDashboardStats()
     }
 
     fun logout() {
+        viewModelScope.launch {
+            runCatching {
+                messagingRepository?.updateMyPresence(
+                    online = false,
+                    displayName = _currentUser.value?.name ?: "Innovator",
+                    role = _currentUser.value?.role ?: "Creator"
+                )
+            }
+        }
         repository.signOut()
         runCatching { Firebase.auth.signOut() }
         _firebaseUid.value = null
         _currentUser.value = null
+        _activeConversationId.value = null
+        _activeProjectId.value = null
+        _activeTaskId.value = null
         _dashboardState.value = UiState.Success(DashboardStats())
         _snackbarMessage.value = "Signed out."
     }
@@ -1536,6 +1864,17 @@ class AppViewModel(
                     success = false,
                     responseLength = responseLength
                 )
+                if (category in setOf(
+                        AiFailureCategory.NETWORK_OFFLINE,
+                        AiFailureCategory.NETWORK_BLOCKED,
+                        AiFailureCategory.APP_CHECK_OR_AUTH,
+                        AiFailureCategory.TIMEOUT
+                    )
+                ) {
+                    viewModelScope.launch {
+                        runCatching { networkDiagnosticManager.checkConnectivity(appContext) }
+                    }
+                }
                 val isTimeout = category == AiFailureCategory.TIMEOUT
                 val diagnosed = SanaPromptEngine.diagnoseAiError(e, modelTier)
                 val partialPrefix = diag
@@ -1707,6 +2046,862 @@ class AppViewModel(
         _copilotMessages.value = listOf(createWelcomeMessage())
     }
 
+    fun setIdeaPortfolioQuery(query: String) {
+        _ideaPortfolioQuery.value = query
+    }
+
+    fun setInvestorPortfolioQuery(query: String) {
+        _investorPortfolioQuery.value = query
+    }
+
+    fun setInvestorStatusFilter(status: String) {
+        _investorStatusFilter.value = status
+    }
+
+    fun toggleSaveToIdeaPortfolio(innovation: BackendInnovation) {
+        val repo = portfolioRepository ?: return
+        viewModelScope.launch {
+            val saved = repo.toggleInnovationInIdeaPortfolio(innovation)
+            _snackbarMessage.value = if (saved) {
+                "Saved \"${innovation.title}\" to Idea Portfolio."
+            } else {
+                "Removed \"${innovation.title}\" from Idea Portfolio."
+            }
+        }
+    }
+
+    fun saveCustomIdeaToPortfolio(
+        title: String,
+        summary: String,
+        category: String,
+        stage: String,
+        priorityTag: String,
+        notes: String
+    ) {
+        val repo = portfolioRepository ?: return
+        val cleanTitle = title.trim()
+        if (cleanTitle.isBlank()) {
+            _snackbarMessage.value = "Enter a project idea title to save."
+            return
+        }
+        viewModelScope.launch {
+            repo.saveCustomIdeaToPortfolio(
+                title = cleanTitle,
+                summary = summary.trim().ifBlank { cleanTitle },
+                category = category.trim().ifBlank { "General" },
+                stage = stage.trim().ifBlank { "Concept" },
+                creatorName = _currentUser.value?.name ?: "Founder",
+                priorityTag = priorityTag,
+                notes = notes
+            )
+            _snackbarMessage.value = "Saved \"$cleanTitle\" to Idea Portfolio."
+        }
+    }
+
+    fun updateIdeaPortfolioNotes(id: String, priorityTag: String, notes: String) {
+        val repo = portfolioRepository ?: return
+        viewModelScope.launch {
+            repo.updateIdeaPortfolioNotes(id = id, priorityTag = priorityTag, notes = notes)
+            _snackbarMessage.value = "Idea Portfolio notes updated."
+        }
+    }
+
+    fun removeFromIdeaPortfolio(id: String) {
+        val repo = portfolioRepository ?: return
+        viewModelScope.launch {
+            repo.removeFromIdeaPortfolio(id)
+            _snackbarMessage.value = "Removed from Idea Portfolio."
+        }
+    }
+
+    fun toggleSaveToInvestorPortfolio(innovation: BackendInnovation) {
+        val repo = portfolioRepository ?: return
+        viewModelScope.launch {
+            val ndaSigned = _signedNdas.value.containsKey(innovation.id)
+            val saved = repo.toggleInnovationInInvestorPortfolio(innovation, ndaSigned = ndaSigned)
+            _snackbarMessage.value = if (saved) {
+                "Saved \"${innovation.title}\" to Investor Portfolio."
+            } else {
+                "Removed \"${innovation.title}\" from Investor Portfolio."
+            }
+        }
+    }
+
+    fun saveCustomProjectToInvestorPortfolio(
+        title: String,
+        summary: String,
+        category: String,
+        stage: String,
+        founderName: String,
+        fundingGoal: Double,
+        valuation: Double,
+        diligenceStatus: String,
+        targetTicketSize: String,
+        notes: String
+    ) {
+        val repo = portfolioRepository ?: return
+        val cleanTitle = title.trim()
+        if (cleanTitle.isBlank()) {
+            _snackbarMessage.value = "Enter a project title to add to Investor Portfolio."
+            return
+        }
+        viewModelScope.launch {
+            repo.saveCustomProjectToInvestorPortfolio(
+                title = cleanTitle,
+                summary = summary.trim().ifBlank { cleanTitle },
+                category = category.trim().ifBlank { "General" },
+                stage = stage.trim().ifBlank { "Seed" },
+                founderName = founderName.trim().ifBlank { "Founder" },
+                fundingGoal = fundingGoal,
+                valuation = valuation,
+                diligenceStatus = diligenceStatus,
+                targetTicketSize = targetTicketSize,
+                notes = notes
+            )
+            _snackbarMessage.value = "Saved \"$cleanTitle\" to Investor Portfolio."
+        }
+    }
+
+    fun updateInvestorDiligence(
+        id: String,
+        diligenceStatus: String,
+        targetTicketSize: String,
+        notes: String
+    ) {
+        val repo = portfolioRepository ?: return
+        viewModelScope.launch {
+            repo.updateInvestorDiligence(
+                id = id,
+                diligenceStatus = diligenceStatus,
+                targetTicketSize = targetTicketSize,
+                notes = notes
+            )
+            _snackbarMessage.value = "Investor Portfolio diligence updated."
+        }
+    }
+
+    fun removeFromInvestorPortfolio(id: String) {
+        val repo = portfolioRepository ?: return
+        viewModelScope.launch {
+            repo.removeFromInvestorPortfolio(id)
+            _snackbarMessage.value = "Removed from Investor Portfolio."
+        }
+    }
+
+    fun setSavedProfilesQuery(query: String) {
+        _savedProfilesQuery.value = query
+    }
+
+    fun toggleSaveCollaboratorProfile(talent: BackendTalent) {
+        val repo = portfolioRepository ?: return
+        viewModelScope.launch {
+            val saved = repo.toggleCollaboratorProfile(talent)
+            _snackbarMessage.value = if (saved) {
+                "Saved \"${talent.name}\" to Saved Profiles."
+            } else {
+                "Removed \"${talent.name}\" from Saved Profiles."
+            }
+        }
+    }
+
+    fun removeSavedCollaboratorProfile(id: String) {
+        val repo = portfolioRepository ?: return
+        viewModelScope.launch {
+            repo.removeSavedProfile(id)
+            _snackbarMessage.value = "Removed from Saved Profiles."
+        }
+    }
+
+    // --- Messaging & Collaboration Actions ---
+
+    fun selectConversation(conversationId: String?) {
+        _activeConversationId.value = conversationId
+        if (conversationId != null) {
+            val item = conversations.value.firstOrNull { it.conversation.id == conversationId }
+            if (item != null) {
+                viewModelScope.launch {
+                    messagingRepository?.markConversationRead(item.conversation, activeMessages.value)
+                }
+            }
+        }
+    }
+
+    fun markActiveConversationRead() {
+        val conv = activeConversation.value?.conversation ?: return
+        val msgs = activeMessages.value
+        viewModelScope.launch {
+            messagingRepository?.markConversationRead(conv, msgs)
+        }
+    }
+
+    fun openDirectChatWithTalent(
+        talent: BackendTalent,
+        innovation: BackendInnovation? = null,
+        onOpened: (String) -> Unit = {}
+    ) {
+        val myUid = _firebaseUid.value
+        val repo = messagingRepository
+        if (myUid == null || repo == null) {
+            _snackbarMessage.value = "Sign in with Google to message ${talent.name}."
+            openAuthModal()
+            return
+        }
+        val myProfile = myFirestoreProfile.value
+        val myName = myProfile?.name ?: _currentUser.value?.name ?: "Innovator"
+        val myRole = myProfile?.role ?: _currentUser.value?.role ?: "Creator"
+        val myAvatar = myProfile?.avatarUrl ?: _currentUser.value?.avatarUrl
+        viewModelScope.launch {
+            _isActionBusy.value = true
+            try {
+                val convId = repo.openOrCreateDirectConversation(
+                    myUid = myUid,
+                    myName = myName,
+                    myRole = myRole,
+                    myAvatar = myAvatar,
+                    peer = ChatPeerDescriptor(
+                        rawId = talent.id,
+                        name = talent.name,
+                        role = talent.role,
+                        avatarUrl = talent.avatarUrl,
+                        isRealFirebaseUid = !talent.id.startsWith("t_") && !talent.id.startsWith("seed_")
+                    ),
+                    contextType = if (innovation != null) ConversationContextType.INNOVATION else ConversationContextType.GENERAL,
+                    innovationId = innovation?.id,
+                    innovationTitle = innovation?.title
+                )
+                _activeConversationId.value = convId
+                onOpened(convId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _snackbarMessage.value = e.localizedMessage ?: "Unable to open conversation."
+            } finally {
+                _isActionBusy.value = false
+            }
+        }
+    }
+
+    fun openDirectChatWithInnovationCreator(
+        innovation: BackendInnovation,
+        onOpened: (String) -> Unit = {}
+    ) {
+        val talentPeer = BackendTalent(
+            id = innovation.authorId.ifBlank { "creator_${innovation.id}" },
+            name = innovation.authorName.ifBlank { "Creator" },
+            role = innovation.authorTitle.ifBlank { "Creator" },
+            roleCategory = "Creators",
+            headline = "Creator of ${innovation.title}",
+            skills = listOf(innovation.category, innovation.stage),
+            location = "IDEA2IMPACT",
+            avatarUrl = innovation.authorAvatar,
+            verified = innovation.isVerifiedCreator
+        )
+        openDirectChatWithTalent(talentPeer, innovation = innovation, onOpened = onOpened)
+    }
+
+    fun createGroupChat(
+        title: String,
+        peers: List<BackendTalent>,
+        innovation: BackendInnovation? = null,
+        onCreated: (String) -> Unit = {}
+    ) {
+        val myUid = _firebaseUid.value
+        val repo = messagingRepository
+        if (myUid == null || repo == null) {
+            _snackbarMessage.value = "Sign in with Google to create a group conversation."
+            openAuthModal()
+            return
+        }
+        val myProfile = myFirestoreProfile.value
+        val myName = myProfile?.name ?: _currentUser.value?.name ?: "Innovator"
+        val myRole = myProfile?.role ?: _currentUser.value?.role ?: "Creator"
+        val myAvatar = myProfile?.avatarUrl ?: _currentUser.value?.avatarUrl
+        viewModelScope.launch {
+            _isActionBusy.value = true
+            try {
+                val convId = repo.createGroupConversation(
+                    myUid = myUid,
+                    myName = myName,
+                    myRole = myRole,
+                    myAvatar = myAvatar,
+                    title = title,
+                    peers = peers.map {
+                        ChatPeerDescriptor(
+                            rawId = it.id,
+                            name = it.name,
+                            role = it.role,
+                            avatarUrl = it.avatarUrl,
+                            isRealFirebaseUid = !it.id.startsWith("t_") && !it.id.startsWith("seed_")
+                        )
+                    },
+                    contextType = if (innovation != null) ConversationContextType.INNOVATION else ConversationContextType.GENERAL,
+                    innovationId = innovation?.id,
+                    innovationTitle = innovation?.title
+                )
+                _activeConversationId.value = convId
+                _snackbarMessage.value = "Created group \"$title\"."
+                onCreated(convId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _snackbarMessage.value = e.localizedMessage ?: "Failed to create group chat."
+            } finally {
+                _isActionBusy.value = false
+            }
+        }
+    }
+
+    fun sendChatMessage(
+        body: String,
+        messageType: MessageType = MessageType.TEXT,
+        replyTo: ChatMessage? = null,
+        attachmentName: String? = null,
+        attachmentMimeType: String? = null,
+        attachmentSizeBytes: Long? = null,
+        attachmentPreviewBase64: String? = null,
+        attachmentUrl: String? = null,
+        sharedInnovation: BackendInnovation? = null,
+        onSent: () -> Unit = {}
+    ) {
+        val conv = activeConversation.value?.conversation ?: return
+        val repo = messagingRepository ?: return
+        if (_firebaseUid.value == null) {
+            openAuthModal()
+            return
+        }
+        val myProfile = myFirestoreProfile.value
+        val myName = myProfile?.name ?: _currentUser.value?.name ?: "Innovator"
+        val myRole = myProfile?.role ?: _currentUser.value?.role ?: "Creator"
+        val myAvatar = myProfile?.avatarUrl ?: _currentUser.value?.avatarUrl
+        viewModelScope.launch {
+            try {
+                repo.sendMessage(
+                    conversation = conv,
+                    senderName = myName,
+                    senderRole = myRole,
+                    senderAvatar = myAvatar,
+                    body = body,
+                    messageType = messageType,
+                    replyTo = replyTo,
+                    attachmentName = attachmentName,
+                    attachmentMimeType = attachmentMimeType,
+                    attachmentSizeBytes = attachmentSizeBytes,
+                    attachmentPreviewBase64 = attachmentPreviewBase64,
+                    attachmentUrl = attachmentUrl,
+                    sharedInnovationId = sharedInnovation?.id,
+                    sharedInnovationTitle = sharedInnovation?.title
+                )
+                onSent()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _snackbarMessage.value = e.localizedMessage ?: "Failed to send message."
+            }
+        }
+    }
+
+    fun editChatMessage(messageId: String, newBody: String) {
+        val convId = _activeConversationId.value ?: return
+        val repo = messagingRepository ?: return
+        viewModelScope.launch {
+            runCatching { repo.editMessage(convId, messageId, newBody) }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    _snackbarMessage.value = e.localizedMessage ?: "Unable to edit message."
+                }
+        }
+    }
+
+    fun deleteChatMessage(messageId: String) {
+        val convId = _activeConversationId.value ?: return
+        val repo = messagingRepository ?: return
+        viewModelScope.launch {
+            runCatching { repo.deleteMessage(convId, messageId) }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    _snackbarMessage.value = e.localizedMessage ?: "Unable to delete message."
+                }
+        }
+    }
+
+    fun toggleChatReaction(message: ChatMessage, emoji: String) {
+        val convId = _activeConversationId.value ?: return
+        val repo = messagingRepository ?: return
+        viewModelScope.launch {
+            runCatching { repo.toggleMessageReaction(convId, message, emoji) }
+        }
+    }
+
+    fun setTypingIndicator(isTyping: Boolean) {
+        val convId = _activeConversationId.value ?: return
+        val repo = messagingRepository ?: return
+        viewModelScope.launch {
+            repo.setTypingStatus(convId, isTyping)
+        }
+    }
+
+    fun togglePinConversation(item: ConversationUiItem) {
+        val repo = messagingRepository ?: return
+        viewModelScope.launch {
+            runCatching {
+                repo.updateConversationPref(
+                    conversationId = item.conversation.id,
+                    pinned = !item.pref.pinned,
+                    muted = item.pref.muted,
+                    archived = item.pref.archived
+                )
+            }
+        }
+    }
+
+    fun toggleMuteConversation(item: ConversationUiItem) {
+        val repo = messagingRepository ?: return
+        viewModelScope.launch {
+            val next = !item.pref.muted
+            runCatching {
+                repo.updateConversationPref(
+                    conversationId = item.conversation.id,
+                    pinned = item.pref.pinned,
+                    muted = next,
+                    archived = item.pref.archived
+                )
+            }.onSuccess {
+                _snackbarMessage.value = if (next) "Notifications muted for this chat." else "Conversation unmuted."
+            }
+        }
+    }
+
+    fun toggleArchiveConversation(item: ConversationUiItem) {
+        val repo = messagingRepository ?: return
+        viewModelScope.launch {
+            val next = !item.pref.archived
+            runCatching {
+                repo.updateConversationPref(
+                    conversationId = item.conversation.id,
+                    pinned = item.pref.pinned,
+                    muted = item.pref.muted,
+                    archived = next
+                )
+            }.onSuccess {
+                _snackbarMessage.value = if (next) "Conversation archived." else "Restored from Archive."
+            }
+        }
+    }
+
+    fun addMemberToActiveGroup(talent: BackendTalent) {
+        val conv = activeConversation.value?.conversation ?: return
+        val repo = messagingRepository ?: return
+        viewModelScope.launch {
+            runCatching {
+                repo.addGroupMember(
+                    conv,
+                    ChatPeerDescriptor(
+                        rawId = talent.id,
+                        name = talent.name,
+                        role = talent.role,
+                        avatarUrl = talent.avatarUrl,
+                        isRealFirebaseUid = !talent.id.startsWith("t_") && !talent.id.startsWith("seed_")
+                    )
+                )
+            }.onSuccess {
+                _snackbarMessage.value = "Added ${talent.name} to group."
+            }.onFailure { e ->
+                if (e is CancellationException) throw e
+                _snackbarMessage.value = e.localizedMessage ?: "Failed to add member."
+            }
+        }
+    }
+
+    fun removeMemberFromActiveGroup(memberUid: String) {
+        val conv = activeConversation.value?.conversation ?: return
+        val repo = messagingRepository ?: return
+        viewModelScope.launch {
+            runCatching { repo.removeGroupMember(conv, memberUid) }
+                .onSuccess { _snackbarMessage.value = "Member removed from group." }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    _snackbarMessage.value = e.localizedMessage ?: "Unable to remove member."
+                }
+        }
+    }
+
+    fun leaveActiveGroup(onLeft: () -> Unit = {}) {
+        val conv = activeConversation.value?.conversation ?: return
+        val repo = messagingRepository ?: return
+        viewModelScope.launch {
+            runCatching { repo.leaveGroupConversation(conv) }
+                .onSuccess {
+                    _activeConversationId.value = null
+                    _snackbarMessage.value = "Left conversation."
+                    onLeft()
+                }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    _snackbarMessage.value = e.localizedMessage ?: "Unable to leave conversation."
+                }
+        }
+    }
+
+    fun toggleBlockPeerInActiveChat() {
+        val item = activeConversation.value ?: return
+        val myUid = _firebaseUid.value ?: return
+        val peerUid = item.conversation.peerUidFor(myUid) ?: return
+        val peerName = item.conversation.displayTitleFor(myUid)
+        val repo = messagingRepository ?: return
+        viewModelScope.launch {
+            runCatching {
+                repo.toggleBlockPeer(item.conversation, peerUid, peerName, item.isPeerBlocked)
+            }.onSuccess {
+                _snackbarMessage.value = if (item.isPeerBlocked) {
+                    "Unblocked $peerName."
+                } else {
+                    "Blocked $peerName."
+                }
+            }.onFailure { e ->
+                if (e is CancellationException) throw e
+                _snackbarMessage.value = e.localizedMessage ?: "Failed to update block status."
+            }
+        }
+    }
+
+    fun reportActiveConversationPeer(reason: String, details: String) {
+        val item = activeConversation.value ?: return
+        val myUid = _firebaseUid.value ?: return
+        val peerUid = item.conversation.peerUidFor(myUid) ?: item.conversation.createdBy
+        val repo = messagingRepository ?: return
+        viewModelScope.launch {
+            runCatching {
+                repo.submitModerationReport(
+                    targetUserId = peerUid,
+                    conversationId = item.conversation.id,
+                    reason = reason,
+                    details = details
+                )
+            }.onSuccess {
+                _snackbarMessage.value = "Safety report submitted to IDEA2IMPACT moderation."
+            }.onFailure { e ->
+                if (e is CancellationException) throw e
+                _snackbarMessage.value = e.localizedMessage ?: "Unable to submit report."
+            }
+        }
+    }
+
+    // --- Collaborations & Workspaces Actions ---
+
+    fun selectCollaborationProject(projectId: String?) {
+        _activeProjectId.value = projectId
+        _activeTaskId.value = null
+    }
+
+    fun selectTaskForComments(taskId: String?) {
+        _activeTaskId.value = taskId
+    }
+
+    fun createCollaborationFromDraft(
+        draft: StartCollaborationDraft,
+        onCreated: (projectId: String, conversationId: String) -> Unit = { _, _ -> }
+    ) {
+        val repo = collaborationRepository ?: return
+        if (_firebaseUid.value == null) {
+            _snackbarMessage.value = "Sign in with Google to launch a collaboration workspace."
+            openAuthModal()
+            return
+        }
+        val sourceConv = draft.sourceConversationId?.let { id ->
+            conversations.value.firstOrNull { it.conversation.id == id }?.conversation
+        }
+        val myProfile = myFirestoreProfile.value
+        val myName = myProfile?.name ?: _currentUser.value?.name ?: "Innovator"
+        val myRole = myProfile?.role ?: _currentUser.value?.role ?: "Creator"
+        val myAvatar = myProfile?.avatarUrl ?: _currentUser.value?.avatarUrl
+        viewModelScope.launch {
+            _isActionBusy.value = true
+            try {
+                val (projectId, convId) = repo.createCollaborationWorkspace(
+                    draft = draft,
+                    myName = myName,
+                    myRole = myRole,
+                    myAvatar = myAvatar,
+                    sourceConversation = sourceConv
+                )
+                _activeProjectId.value = projectId
+                _snackbarMessage.value = "Collaboration workspace \"${draft.title}\" launched!"
+                onCreated(projectId, convId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _snackbarMessage.value = e.localizedMessage ?: "Failed to create collaboration project."
+            } finally {
+                _isActionBusy.value = false
+            }
+        }
+    }
+
+    fun inviteCollaboratorToActiveProject(
+        talent: BackendTalent,
+        proposedRole: String,
+        message: String
+    ) {
+        val project = activeProject.value ?: return
+        val repo = collaborationRepository ?: return
+        val myName = myFirestoreProfile.value?.name ?: _currentUser.value?.name ?: "Innovator"
+        viewModelScope.launch {
+            _isActionBusy.value = true
+            try {
+                repo.inviteCollaboratorToProject(
+                    project = project,
+                    inviteeId = talent.id,
+                    inviteeName = talent.name,
+                    proposedRole = proposedRole,
+                    message = message,
+                    myName = myName
+                )
+                _snackbarMessage.value = "Sent collaboration invite to ${talent.name}."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _snackbarMessage.value = e.localizedMessage ?: "Unable to invite collaborator."
+            } finally {
+                _isActionBusy.value = false
+            }
+        }
+    }
+
+    fun respondToCollaborationInvite(
+        invite: CollaborationInvitation,
+        accept: Boolean,
+        onAccepted: (String) -> Unit = {}
+    ) {
+        val repo = collaborationRepository ?: return
+        val myName = myFirestoreProfile.value?.name ?: _currentUser.value?.name ?: "Collaborator"
+        val myAvatar = myFirestoreProfile.value?.avatarUrl ?: _currentUser.value?.avatarUrl
+        viewModelScope.launch {
+            _isActionBusy.value = true
+            try {
+                repo.respondToInvitation(invite, accept, myName, myAvatar)
+                if (accept) {
+                    _activeProjectId.value = invite.projectId
+                    _snackbarMessage.value = "Joined \"${invite.projectTitle}\"!"
+                    onAccepted(invite.projectId)
+                } else {
+                    _snackbarMessage.value = "Declined invitation to \"${invite.projectTitle}\"."
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _snackbarMessage.value = e.localizedMessage ?: "Failed to respond to invitation."
+            } finally {
+                _isActionBusy.value = false
+            }
+        }
+    }
+
+    fun createProjectTask(
+        title: String,
+        description: String,
+        assigneeUid: String?,
+        assigneeName: String?,
+        priority: TaskPriority,
+        dueAtEpochMs: Long?,
+        attachmentName: String?
+    ) {
+        val project = activeProject.value ?: return
+        val repo = collaborationRepository ?: return
+        val myName = myFirestoreProfile.value?.name ?: _currentUser.value?.name ?: "Member"
+        viewModelScope.launch {
+            _isActionBusy.value = true
+            try {
+                repo.createTask(
+                    project = project,
+                    existingTasks = activeProjectTasks.value,
+                    title = title,
+                    description = description,
+                    assigneeUid = assigneeUid,
+                    assigneeName = assigneeName,
+                    priority = priority,
+                    dueAtEpochMs = dueAtEpochMs,
+                    attachmentName = attachmentName,
+                    myName = myName
+                )
+                _snackbarMessage.value = "Added task \"$title\"."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _snackbarMessage.value = e.localizedMessage ?: "Unable to create task."
+            } finally {
+                _isActionBusy.value = false
+            }
+        }
+    }
+
+    fun updateProjectTaskStatus(task: CollaborationTask, status: TaskStatus) {
+        val project = activeProject.value ?: return
+        val repo = collaborationRepository ?: return
+        val myName = myFirestoreProfile.value?.name ?: _currentUser.value?.name ?: "Member"
+        viewModelScope.launch {
+            runCatching {
+                repo.updateTaskStatus(
+                    project = project,
+                    allTasks = activeProjectTasks.value,
+                    task = task,
+                    newStatus = status,
+                    myName = myName
+                )
+            }.onFailure { e ->
+                if (e is CancellationException) throw e
+                _snackbarMessage.value = e.localizedMessage ?: "Failed to update task."
+            }
+        }
+    }
+
+    fun deleteProjectTask(task: CollaborationTask) {
+        val project = activeProject.value ?: return
+        val repo = collaborationRepository ?: return
+        viewModelScope.launch {
+            runCatching {
+                repo.deleteTask(project, activeProjectTasks.value, task)
+            }.onSuccess {
+                _snackbarMessage.value = "Task deleted."
+            }.onFailure { e ->
+                if (e is CancellationException) throw e
+                _snackbarMessage.value = e.localizedMessage ?: "Unable to delete task."
+            }
+        }
+    }
+
+    fun addProjectTaskComment(task: CollaborationTask, body: String) {
+        val project = activeProject.value ?: return
+        val repo = collaborationRepository ?: return
+        val myName = myFirestoreProfile.value?.name ?: _currentUser.value?.name ?: "Member"
+        viewModelScope.launch {
+            runCatching {
+                repo.addTaskComment(project, task, body, myName)
+            }.onFailure { e ->
+                if (e is CancellationException) throw e
+                _snackbarMessage.value = e.localizedMessage ?: "Failed to add task comment."
+            }
+        }
+    }
+
+    fun uploadProjectFile(
+        fileName: String,
+        mimeType: String,
+        sizeBytes: Long,
+        referenceUrl: String?,
+        previewBase64: String?,
+        notes: String?
+    ) {
+        val project = activeProject.value ?: return
+        val repo = collaborationRepository ?: return
+        val myName = myFirestoreProfile.value?.name ?: _currentUser.value?.name ?: "Member"
+        viewModelScope.launch {
+            _isActionBusy.value = true
+            try {
+                repo.uploadSharedFile(
+                    project = project,
+                    fileName = fileName,
+                    mimeType = mimeType,
+                    sizeBytes = sizeBytes,
+                    referenceUrl = referenceUrl,
+                    previewBase64 = previewBase64,
+                    notes = notes,
+                    myName = myName
+                )
+                _snackbarMessage.value = "Shared private file \"$fileName\" with workspace."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _snackbarMessage.value = e.localizedMessage ?: "Failed to share file."
+            } finally {
+                _isActionBusy.value = false
+            }
+        }
+    }
+
+    fun deleteProjectFile(fileId: String) {
+        val projectId = _activeProjectId.value ?: return
+        val repo = collaborationRepository ?: return
+        viewModelScope.launch {
+            runCatching { repo.deleteSharedFile(projectId, fileId) }
+                .onSuccess { _snackbarMessage.value = "Removed shared file." }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    _snackbarMessage.value = e.localizedMessage ?: "Unable to delete file."
+                }
+        }
+    }
+
+    fun postProjectUpdate(message: String) {
+        val project = activeProject.value ?: return
+        val repo = collaborationRepository ?: return
+        val myName = myFirestoreProfile.value?.name ?: _currentUser.value?.name ?: "Member"
+        viewModelScope.launch {
+            runCatching { repo.postProjectUpdate(project, message, myName) }
+                .onSuccess { _snackbarMessage.value = "Posted update to workspace." }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    _snackbarMessage.value = e.localizedMessage ?: "Failed to post update."
+                }
+        }
+    }
+
+    fun updateCollaborationStatus(newStatus: CollaborationStatus) {
+        val project = activeProject.value ?: return
+        val repo = collaborationRepository ?: return
+        val myName = myFirestoreProfile.value?.name ?: _currentUser.value?.name ?: "Member"
+        viewModelScope.launch {
+            runCatching { repo.updateProjectStatus(project, newStatus, myName) }
+                .onSuccess { _snackbarMessage.value = "Project marked ${newStatus.label}." }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    _snackbarMessage.value = e.localizedMessage ?: "Unable to update status."
+                }
+        }
+    }
+
+    fun updateCollaborationMemberRole(memberUid: String, newRole: String) {
+        val project = activeProject.value ?: return
+        val repo = collaborationRepository ?: return
+        viewModelScope.launch {
+            runCatching { repo.updateMemberRole(project, memberUid, newRole) }
+                .onSuccess { _snackbarMessage.value = "Updated member role." }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    _snackbarMessage.value = e.localizedMessage ?: "Unable to update member role."
+                }
+        }
+    }
+
+    fun removeCollaborationMember(memberUid: String) {
+        val project = activeProject.value ?: return
+        val repo = collaborationRepository ?: return
+        viewModelScope.launch {
+            runCatching { repo.removeProjectMember(project, memberUid) }
+                .onSuccess { _snackbarMessage.value = "Removed member from project." }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    _snackbarMessage.value = e.localizedMessage ?: "Unable to remove member."
+                }
+        }
+    }
+
+    fun leaveActiveCollaboration(onLeft: () -> Unit = {}) {
+        val project = activeProject.value ?: return
+        val repo = collaborationRepository ?: return
+        viewModelScope.launch {
+            runCatching { repo.leaveCollaboration(project) }
+                .onSuccess {
+                    _activeProjectId.value = null
+                    _snackbarMessage.value = "Left collaboration workspace."
+                    onLeft()
+                }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    _snackbarMessage.value = e.localizedMessage ?: "Unable to leave collaboration."
+                }
+        }
+    }
+
     private fun createWelcomeMessage(): CopilotMessage {
         return CopilotMessage(
             id = "welcome",
@@ -1747,7 +2942,46 @@ class AppViewModel(
         )
     }
 
-    private companion object {
-        const val TAG = "AppViewModel"
+    override fun onCleared() {
+        networkDiagnosticManager.stopMonitoring()
+        super.onCleared()
+    }
+
+    companion object {
+        private const val TAG = "AppViewModel"
+
+        fun mergeNotificationAlerts(
+            localAlerts: List<NotificationAlert>,
+            cloudAlerts: List<CloudNotification>
+        ): List<NotificationAlert> {
+            val mappedCloud = cloudAlerts.map { c ->
+                val type = when (c.notificationType) {
+                    "MESSAGE" -> NotificationType.MESSAGE
+                    "TASK_ASSIGNED", "TASK_COMPLETED", "DEADLINE_ALERT" -> NotificationType.TASK
+                    "COLLAB_INVITE", "COLLAB_RESPONSE", "PROJECT_UPDATE" -> NotificationType.COLLABORATION
+                    "PROPOSAL" -> NotificationType.PROPOSAL
+                    else -> NotificationType.PLATFORM_UPDATE
+                }
+                val targetRoute = when (c.targetType) {
+                    "CONVERSATION" -> "messages"
+                    "COLLABORATION" -> "collaborations"
+                    else -> null
+                }
+                NotificationAlert(
+                    id = "cloud_${c.id}",
+                    type = type,
+                    title = c.title,
+                    message = c.body,
+                    createdAtEpochMs = c.createdAt?.toDate()?.time ?: System.currentTimeMillis(),
+                    isRead = c.read,
+                    innovationId = if (c.targetType == "INNOVATION") c.targetId else null,
+                    targetRoute = targetRoute,
+                    targetId = c.targetId
+                )
+            }
+            return (mappedCloud + localAlerts)
+                .distinctBy { it.id }
+                .sortedByDescending { it.createdAtEpochMs }
+        }
     }
 }

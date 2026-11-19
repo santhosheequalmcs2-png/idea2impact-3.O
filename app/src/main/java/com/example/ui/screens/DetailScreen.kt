@@ -25,17 +25,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Handshake
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.FavoriteBorder
+import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -91,16 +96,21 @@ fun DetailScreen(
     signedNda: DigitalNdaRecord?,
     pitchDeckState: UiState<PitchDeckResult>?,
     isBusy: Boolean,
+    isInIdeaPortfolio: Boolean = false,
+    isInInvestorPortfolio: Boolean = false,
     onBack: () -> Unit,
     onToggleLike: () -> Unit,
     onToggleBookmark: () -> Unit,
+    onToggleIdeaPortfolio: () -> Unit = {},
+    onToggleInvestorPortfolio: () -> Unit = {},
     onPostComment: (text: String, onDone: () -> Unit) -> Unit,
     onSubmitProposal: (type: String, amount: String, message: String, contactInfo: String, onDone: () -> Unit) -> Unit,
     onSignNda: (signerName: String, signerOrg: String) -> Unit,
     onGeneratePitchDeck: () -> Unit,
     onDismissPitchDeck: () -> Unit,
     onAnalyzeWithCopilot: () -> Unit = {},
-    onFindMatches: () -> Unit = {}
+    onFindMatches: () -> Unit = {},
+    onMessageCreator: () -> Unit = {}
 ) {
     var commentText by remember { mutableStateOf("") }
     var showProposalModal by remember { mutableStateOf(false) }
@@ -325,6 +335,24 @@ fun DetailScreen(
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
+                                    OutlinedButton(
+                                        onClick = {
+                                            haptics.tap()
+                                            onMessageCreator()
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                        modifier = Modifier
+                                            .heightIn(min = 48.dp)
+                                            .testTag("detail_message_creator_button")
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.Chat,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(Modifier.width(5.dp))
+                                        Text("Message", maxLines = 1)
+                                    }
                                 }
                             }
 
@@ -456,6 +484,50 @@ fun DetailScreen(
                         Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(17.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Analyze with AI Sana")
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                haptics.toggle(!isInIdeaPortfolio)
+                                onToggleIdeaPortfolio()
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("detail_idea_portfolio_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isInIdeaPortfolio) Icons.Filled.Lightbulb else Icons.Outlined.Lightbulb,
+                                contentDescription = null,
+                                tint = if (isInIdeaPortfolio) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(17.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (isInIdeaPortfolio) "In Idea Portfolio" else "Idea Portfolio", maxLines = 1)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                haptics.toggle(!isInInvestorPortfolio)
+                                onToggleInvestorPortfolio()
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("detail_investor_portfolio_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isInInvestorPortfolio) Icons.Filled.AccountBalanceWallet else Icons.Outlined.AccountBalanceWallet,
+                                contentDescription = null,
+                                tint = if (isInInvestorPortfolio) EmeraldSuccess else MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(17.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (isInInvestorPortfolio) "In Investor Portfolio" else "Investor Portfolio", maxLines = 1)
+                        }
                     }
 
                     OutlinedButton(

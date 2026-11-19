@@ -127,6 +127,7 @@ enum class AiFailureCategory {
     NONE,
     TIMEOUT,
     NETWORK_OFFLINE,
+    NETWORK_BLOCKED,
     APP_CHECK_OR_AUTH,
     MODEL_UNAVAILABLE,
     QUOTA_OR_RATE_LIMIT,

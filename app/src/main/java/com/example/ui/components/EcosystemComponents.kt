@@ -1,8 +1,10 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -20,6 +22,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Bookmark
@@ -33,34 +36,142 @@ import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.model.EcosystemTaxonomy
 import com.example.data.model.TalentProfile
 import com.example.data.model.VerifiedOrganization
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.GoldAmber
 import com.example.util.LocalHapticFeedbackManager
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EcosystemSearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholderText: String,
+    clearContentDescription: String,
+    compact: Boolean,
+    modifier: Modifier = Modifier
+) {
+    if (!compact) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = {
+                Text(
+                    text = placeholderText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            trailingIcon = {
+                if (value.isNotBlank()) {
+                    IconButton(onClick = { onValueChange("") }) {
+                        Icon(Icons.Filled.Close, contentDescription = clearContentDescription)
+                    }
+                }
+            },
+            singleLine = true,
+            shape = RoundedCornerShape(14.dp),
+            modifier = modifier.fillMaxWidth()
+        )
+    } else {
+        val interactionSource = remember { MutableInteractionSource() }
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                fontSize = 13.5.sp,
+                color = MaterialTheme.colorScheme.onSurface
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            interactionSource = interactionSource,
+            modifier = modifier
+                .fillMaxWidth()
+                .height(48.dp)
+        ) { innerTextField ->
+            OutlinedTextFieldDefaults.DecorationBox(
+                value = value,
+                innerTextField = innerTextField,
+                enabled = true,
+                singleLine = true,
+                visualTransformation = VisualTransformation.None,
+                interactionSource = interactionSource,
+                placeholder = {
+                    Text(
+                        text = placeholderText,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.5.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                trailingIcon = {
+                    if (value.isNotBlank()) {
+                        IconButton(
+                            onClick = { onValueChange("") },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = clearContentDescription,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                container = {
+                    OutlinedTextFieldDefaults.Container(
+                        enabled = true,
+                        isError = false,
+                        interactionSource = interactionSource,
+                        colors = OutlinedTextFieldDefaults.colors(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            )
+        }
+    }
+}
 
 @Composable
 fun IndiaDirectoryDisclaimerCard(
@@ -100,7 +211,8 @@ fun MyCollaboratorProfileCard(
     isBusy: Boolean,
     onToggleVisibility: (Boolean) -> Unit,
     onEditProfile: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    compact: Boolean = false
 ) {
     val haptics = LocalHapticFeedbackManager.current
     val isPublic = profile?.isPublic ?: false
@@ -108,23 +220,25 @@ fun MyCollaboratorProfileCard(
     Surface(
         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
-        shape = RoundedCornerShape(18.dp),
+        shape = RoundedCornerShape(if (compact) 14.dp else 18.dp),
         modifier = modifier.fillMaxWidth().testTag("my_collaborator_profile_card")
     ) {
         Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier.padding(if (compact) 10.dp else 14.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                     Text(
                         text = profile?.name?.takeIf { it.isNotBlank() } ?: "My Collaborator Profile",
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = if (profile != null) {
@@ -133,7 +247,9 @@ fun MyCollaboratorProfileCard(
                             "Sign in with Google to publish your builder/founder profile"
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = if (compact) 1 else 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 OutlinedButton(
@@ -141,7 +257,10 @@ fun MyCollaboratorProfileCard(
                         haptics.tap()
                         onEditProfile()
                     },
-                    modifier = Modifier.heightIn(min = 48.dp).testTag("edit_my_talent_profile_button")
+                    contentPadding = if (compact) PaddingValues(horizontal = 12.dp, vertical = 6.dp) else PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    modifier = Modifier
+                        .heightIn(min = if (compact) 40.dp else 48.dp)
+                        .testTag("edit_my_talent_profile_button")
                 ) {
                     Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
@@ -162,8 +281,10 @@ fun MyCollaboratorProfileCard(
                     )
                     Text(
                         text = "Control whether other members can find your profile and send collaboration requests.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        style = if (compact) MaterialTheme.typography.labelSmall.copy(lineHeight = 14.sp) else MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = if (compact) 2 else Int.MAX_VALUE,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
                 Switch(
@@ -409,49 +530,50 @@ fun VerifiedDirectoryPanel(
         }
     }
 
-    LazyColumn(
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = modifier.fillMaxSize().testTag("india_directory_list")
-    ) {
-        item {
-            IndiaDirectoryDisclaimerCard()
-        }
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val compact = maxWidth < 600.dp
+        LazyColumn(
+            contentPadding = PaddingValues(
+                horizontal = if (compact) 14.dp else 16.dp,
+                vertical = if (compact) 8.dp else 16.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp),
+            modifier = Modifier.fillMaxSize().testTag("india_directory_list")
+        ) {
+            item {
+                IndiaDirectoryDisclaimerCard()
+            }
 
-        item {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                placeholder = { Text("Search name, sector, city, focus...") },
-                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                trailingIcon = {
-                    if (query.isNotBlank()) {
-                        IconButton(onClick = { query = "" }) {
-                            Icon(Icons.Filled.Close, contentDescription = "Clear directory search")
+            item {
+                EcosystemSearchField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholderText = "Search name, sector, city, focus...",
+                    clearContentDescription = "Clear directory search",
+                    compact = compact,
+                    modifier = Modifier.testTag("directory_search_input")
+                )
+            }
+
+            item {
+                CompositionLocalProvider(
+                    LocalMinimumInteractiveComponentSize provides if (compact) 36.dp else 48.dp
+                ) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
+                        items(EcosystemTaxonomy.organizationTypes) { type ->
+                            FilterChip(
+                                selected = selectedType == type,
+                                onClick = {
+                                    haptics.tap()
+                                    selectedType = type
+                                },
+                                label = { Text(type, maxLines = 1) },
+                                modifier = Modifier.heightIn(min = if (compact) 34.dp else 48.dp)
+                            )
                         }
                     }
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth().testTag("directory_search_input")
-            )
-        }
-
-        item {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(EcosystemTaxonomy.organizationTypes) { type ->
-                    FilterChip(
-                        selected = selectedType == type,
-                        onClick = {
-                            haptics.tap()
-                            selectedType = type
-                        },
-                        label = { Text(type) },
-                        modifier = Modifier.heightIn(min = 48.dp)
-                    )
                 }
             }
-        }
 
         item {
             Row(
@@ -524,6 +646,7 @@ fun VerifiedDirectoryPanel(
 
         item { Spacer(Modifier.height(12.dp)) }
     }
+    }
 }
 
 @Composable
@@ -547,43 +670,54 @@ fun FundingOpportunitiesPanel(
         }
     }
 
-    LazyColumn(
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = modifier.fillMaxSize().testTag("funding_opportunities_list")
-    ) {
-        item {
-            IndiaDirectoryDisclaimerCard(
-                text = "Funding & program directory disclaimer: Shows only investors, accelerators, incubators, and public programs backed by verified source records. Missing deadlines are labeled unverified."
-            )
-        }
+    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
+        val compact = maxWidth < 600.dp
+        LazyColumn(
+            contentPadding = PaddingValues(
+                horizontal = if (compact) 14.dp else 16.dp,
+                vertical = if (compact) 8.dp else 16.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp),
+            modifier = Modifier.fillMaxSize().testTag("funding_opportunities_list")
+        ) {
+            item {
+                IndiaDirectoryDisclaimerCard(
+                    text = "Funding & program directory disclaimer: Shows only investors, accelerators, incubators, and public programs backed by verified source records. Missing deadlines are labeled unverified."
+                )
+            }
 
-        item {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item {
-                    FilterChip(
-                        selected = savedOnly,
-                        onClick = {
-                            haptics.tap()
-                            savedOnly = !savedOnly
-                        },
-                        label = { Text("Saved (${savedIds.size})") },
-                        modifier = Modifier.heightIn(min = 48.dp).testTag("funding_saved_only_chip")
-                    )
-                }
-                items(EcosystemTaxonomy.fundingOrganizationTypes) { type ->
-                    FilterChip(
-                        selected = selectedType == type,
-                        onClick = {
-                            haptics.tap()
-                            selectedType = type
-                        },
-                        label = { Text(type) },
-                        modifier = Modifier.heightIn(min = 48.dp)
-                    )
+            item {
+                CompositionLocalProvider(
+                    LocalMinimumInteractiveComponentSize provides if (compact) 36.dp else 48.dp
+                ) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(if (compact) 6.dp else 8.dp)) {
+                        item {
+                            FilterChip(
+                                selected = savedOnly,
+                                onClick = {
+                                    haptics.tap()
+                                    savedOnly = !savedOnly
+                                },
+                                label = { Text("Saved (${savedIds.size})", maxLines = 1) },
+                                modifier = Modifier
+                                    .heightIn(min = if (compact) 34.dp else 48.dp)
+                                    .testTag("funding_saved_only_chip")
+                            )
+                        }
+                        items(EcosystemTaxonomy.fundingOrganizationTypes) { type ->
+                            FilterChip(
+                                selected = selectedType == type,
+                                onClick = {
+                                    haptics.tap()
+                                    selectedType = type
+                                },
+                                label = { Text(type, maxLines = 1) },
+                                modifier = Modifier.heightIn(min = if (compact) 34.dp else 48.dp)
+                            )
+                        }
+                    }
                 }
             }
-        }
 
         if (fundingOrgs.isEmpty()) {
             item {
@@ -631,5 +765,6 @@ fun FundingOpportunitiesPanel(
         }
 
         item { Spacer(Modifier.height(12.dp)) }
+    }
     }
 }

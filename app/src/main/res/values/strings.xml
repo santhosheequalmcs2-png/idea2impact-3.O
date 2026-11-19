@@ -51,4 +51,19 @@
     <string name="cd_onboard_match">Illustration of AI prior-art and investor opportunity matching</string>
     <string name="cd_onboard_assemble">Illustration of multidisciplinary builders assembling prototypes</string>
     <string name="cd_onboard_capital">Illustration of global capital flow and IP licensing growth</string>
+
+    <string name="diag_title">Network &amp; Firebase Health</string>
+    <string name="diag_dialog_title">Network &amp; Firebase Diagnostics</string>
+    <string name="diag_idle_subtitle">Check internet status and Firebase reachability</string>
+    <string name="diag_checking_title">Checking Firebase Reachability…</string>
+    <string name="diag_checking_subtitle">Testing device network, TLS, and App Check</string>
+    <string name="diag_run_check">Check Network</string>
+    <string name="diag_recheck">Re-check</string>
+    <string name="diag_checking">Checking…</string>
+    <string name="diag_cd_status_icon">Network and Firebase reachability status</string>
+    <string name="diag_status_no_internet">Check your internet connection</string>
+    <string name="diag_status_firebase_unreachable">Firebase server unreachable</string>
+    <string name="diag_status_blocked">Firebase requests blocked</string>
+    <string name="diag_status_app_check_issue">App Check verification failed</string>
+    <string name="diag_status_connected">Connected · Firebase &amp; AI ready</string>
 </resources>

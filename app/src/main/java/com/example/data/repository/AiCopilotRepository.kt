@@ -1,5 +1,6 @@
 package com.example.data.repository
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.util.Log
 import com.example.data.model.AiFailureCategory
@@ -11,6 +12,11 @@ import com.example.data.model.Innovation
 import com.example.data.model.InvestorOnePager
 import com.example.data.model.PitchDeckResult
 import com.example.data.model.PitchSlide
+import com.example.util.AppCheckProbeOutcome
+import com.example.util.DeviceConnectivityState
+import com.example.util.FirebaseHttpsProbeResult
+import com.example.util.NetworkDiagnostics
+import com.example.util.lastAppCheckInitStatus
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.RequestOptions
@@ -37,7 +43,7 @@ private const val AI_TIMEOUT_MS = 60_000L
 private const val AI_PRE_FALLBACK_ATTEMPT_TIMEOUT_MS = 24_000L
 private const val AI_FALLBACK_STREAM_TIMEOUT_MS = 28_000L
 private const val SDK_REQUEST_TIMEOUT_MS = 55_000L
-private const val APP_CHECK_PROBE_TIMEOUT_MS = 2_000L
+private const val APP_CHECK_PROBE_TIMEOUT_MS = 3_500L
 private const val PRE_CHUNK_RETRY_BACKOFF_MS = 800L
 private const val MAX_PRE_CHUNK_ATTEMPTS = 2
 internal const val DEEP_MODEL_NAME = "gemini-3.8-flash"
@@ -62,7 +68,7 @@ class AiCopilotDiagnosticException(
     cause
 )
 
-class AiCopilotRepository {
+class AiCopilotRepository(private val appContext: Context? = null) {
 
     private val deepRequestOptions = RequestOptions(SDK_REQUEST_TIMEOUT_MS)
     private val fastRequestOptions = RequestOptions(SDK_REQUEST_TIMEOUT_MS)
@@ -162,16 +168,78 @@ class AiCopilotRepository {
         )
     }
 
-    private suspend fun probeAppCheckStatus(): String {
-        return runCatching {
-            val probe = withTimeoutOrNull(APP_CHECK_PROBE_TIMEOUT_MS) {
-                val tokenResult = FirebaseAppCheck.getInstance().getAppCheckToken(false).await()
-                if (tokenResult.token.isNotBlank()) "token_ready" else "empty_token"
+    private suspend fun probeAppCheckStatus(): AppCheckProbeOutcome {
+        val connectivity = NetworkDiagnostics.checkDeviceConnectivity(appContext)
+        val initStatus = lastAppCheckInitStatus
+        if (connectivity == DeviceConnectivityState.OFFLINE) {
+            Log.w(
+                TAG,
+                "AI Sana preflight aborted: device offline [build=${initStatus.buildType}, project=${initStatus.projectId}, provider=${initStatus.provider}]"
+            )
+            return AppCheckProbeOutcome(
+                statusLabel = "device_offline",
+                abortCategory = AiFailureCategory.NETWORK_OFFLINE,
+                detail = "Device reports no active internet connection."
+            )
+        }
+
+        return try {
+            val tokenResult = withTimeoutOrNull(APP_CHECK_PROBE_TIMEOUT_MS) {
+                FirebaseAppCheck.getInstance().getAppCheckToken(false).await()
             }
-            probe ?: "probe_timeout_${APP_CHECK_PROBE_TIMEOUT_MS}ms"
-        }.getOrElse { err ->
+            if (tokenResult != null) {
+                if (tokenResult.token.isNotBlank()) {
+                    AppCheckProbeOutcome(statusLabel = "token_ready")
+                } else {
+                    Log.w(TAG, "App Check returned empty token [build=${initStatus.buildType}, project=${initStatus.projectId}]")
+                    AppCheckProbeOutcome(statusLabel = "empty_token")
+                }
+            } else {
+                val httpsProbe = NetworkDiagnostics.probeFirebaseHttps()
+                when (httpsProbe) {
+                    is FirebaseHttpsProbeResult.DnsOrSocketUnreachable -> {
+                        Log.w(TAG, "App Check timed out and Firebase HTTPS is unreachable: ${httpsProbe.reason}")
+                        AppCheckProbeOutcome(
+                            statusLabel = "network_unreachable",
+                            abortCategory = AiFailureCategory.NETWORK_OFFLINE,
+                            detail = httpsProbe.reason,
+                            cause = httpsProbe.cause
+                        )
+                    }
+                    is FirebaseHttpsProbeResult.TlsOrHttpsBlocked -> {
+                        Log.w(TAG, "App Check timed out and Firebase HTTPS is blocked: ${httpsProbe.reason}")
+                        AppCheckProbeOutcome(
+                            statusLabel = "https_blocked",
+                            abortCategory = AiFailureCategory.NETWORK_BLOCKED,
+                            detail = httpsProbe.reason,
+                            cause = httpsProbe.cause
+                        )
+                    }
+                    is FirebaseHttpsProbeResult.Reachable -> {
+                        Log.w(
+                            TAG,
+                            "App Check token fetch exceeded ${APP_CHECK_PROBE_TIMEOUT_MS}ms despite reachable HTTPS (HTTP ${httpsProbe.httpCode}); continuing to stream."
+                        )
+                        AppCheckProbeOutcome(statusLabel = "probe_timeout_${APP_CHECK_PROBE_TIMEOUT_MS}ms")
+                    }
+                }
+            }
+        } catch (err: Exception) {
             if (err is CancellationException) throw err
-            "probe_error:${err.javaClass.simpleName}"
+            val httpsProbe = NetworkDiagnostics.probeFirebaseHttps()
+            val outcome = NetworkDiagnostics.classifyFirebaseProbeException(
+                error = err,
+                connectivity = connectivity,
+                httpsProbe = httpsProbe
+            )
+            Log.e(
+                TAG,
+                "App Check probe error [build=${initStatus.buildType}, project=${initStatus.projectId}, " +
+                    "provider=${initStatus.provider}, tokenSource=${initStatus.tokenSource}, " +
+                    "connectivity=$connectivity, httpsProbe=${httpsProbe.javaClass.simpleName}, " +
+                    "outcome=${outcome.statusLabel}, category=${outcome.abortCategory}, detail=${outcome.detail}]"
+            )
+            outcome
         }
     }
 
@@ -227,7 +295,8 @@ class AiCopilotRepository {
             historyTurnCount = recentHistory.size,
             hasAttachedImage = attachedImage != null,
             isGreeting = bundle.isGreeting,
-            appCheckProbe = { probeAppCheckStatus() },
+            appCheckProbe = { "token_ready" },
+            preflightCheck = { probeAppCheckStatus() },
             streamFactory = { isFast ->
                 val targetModel = if (isFast) fastChatModel else chatModel
                 flow {
@@ -261,6 +330,7 @@ class AiCopilotRepository {
         fallbackTimeoutMs: Long = AI_FALLBACK_STREAM_TIMEOUT_MS,
         preChunkBackoffMs: Long = PRE_CHUNK_RETRY_BACKOFF_MS,
         appCheckProbe: suspend () -> String,
+        preflightCheck: (suspend () -> AppCheckProbeOutcome)? = null,
         streamFactory: (useFast: Boolean) -> Flow<String>,
         sleeper: suspend (Long) -> Unit = { delay(it) },
         logger: (level: String, message: String, error: Throwable?) -> Unit = { _, _, _ -> },
@@ -268,7 +338,33 @@ class AiCopilotRepository {
         onModelResolved: (route: String, modelName: String, switchedFromModel: String?, fallbackReason: AiFailureCategory?) -> Unit = { _, _, _, _ -> }
     ): Flow<String> = flow {
         onPhaseChange(AiRequestPhase.CHECKING_CONNECTION)
-        val appCheckStatus = appCheckProbe()
+        val preflight = preflightCheck?.invoke() ?: AppCheckProbeOutcome(statusLabel = appCheckProbe())
+        val appCheckStatus = preflight.statusLabel
+
+        val shouldAbortPreflight = preflight.abortCategory in setOf(
+            AiFailureCategory.NETWORK_OFFLINE,
+            AiFailureCategory.NETWORK_BLOCKED
+        )
+        if (shouldAbortPreflight) {
+            val primaryRoute = if (useFastModel) "fast_flash_lite" else "deep_flash"
+            val primaryModel = if (useFastModel) FAST_MODEL_NAME else DEEP_MODEL_NAME
+            throw AiCopilotDiagnosticException(
+                route = primaryRoute,
+                modelName = primaryModel,
+                phase = "network_preflight",
+                elapsedMs = 0L,
+                chunkCount = 0,
+                appCheckStatus = appCheckStatus,
+                cause = preflight.cause ?: IllegalStateException(preflight.detail.ifBlank { appCheckStatus }),
+                category = preflight.abortCategory!!
+            )
+        } else if (preflight.abortCategory == AiFailureCategory.APP_CHECK_OR_AUTH) {
+            logger(
+                "W",
+                "App Check preflight reported non-blocking issue ($appCheckStatus); proceeding to Firebase AI direct request.",
+                preflight.cause
+            )
+        }
 
         suspend fun runModelWithPreChunkRetry(
             isFast: Boolean,
@@ -505,7 +601,22 @@ class AiCopilotRepository {
         """.trimIndent()
 
         return try {
-            val appCheckStatus = probeAppCheckStatus()
+        val preflight = probeAppCheckStatus()
+        val appCheckStatus = preflight.statusLabel
+        if (preflight.abortCategory in setOf(AiFailureCategory.NETWORK_OFFLINE, AiFailureCategory.NETWORK_BLOCKED)) {
+            throw AiCopilotDiagnosticException(
+                route = "deep_flash",
+                modelName = DEEP_MODEL_NAME,
+                phase = "network_preflight",
+                elapsedMs = 0L,
+                chunkCount = 0,
+                appCheckStatus = appCheckStatus,
+                cause = preflight.cause ?: IllegalStateException(preflight.detail.ifBlank { appCheckStatus }),
+                category = preflight.abortCategory!!
+            )
+        } else if (preflight.abortCategory == AiFailureCategory.APP_CHECK_OR_AUTH) {
+            Log.w(TAG, "App Check preflight non-blocking for pitch deck ($appCheckStatus); attempting Firebase AI directly.")
+        }
             Log.d(TAG, "Generating pitch deck [model=$DEEP_MODEL_NAME, appCheck=$appCheckStatus]")
             val response = withTimeout(AI_TIMEOUT_MS) {
                 pitchDeckModel.generateContent(prompt)
@@ -561,7 +672,20 @@ class AiCopilotRepository {
         val startMs = System.currentTimeMillis()
         var chunkCount = 0
         var phase = "awaiting_first_chunk"
-        val appCheckStatus = probeAppCheckStatus()
+        val preflight = probeAppCheckStatus()
+        val appCheckStatus = preflight.statusLabel
+        if (preflight.abortCategory != null) {
+            throw AiCopilotDiagnosticException(
+                route = "deep_flash",
+                modelName = DEEP_MODEL_NAME,
+                phase = if (preflight.abortCategory == AiFailureCategory.APP_CHECK_OR_AUTH) "app_check_probe" else "network_preflight",
+                elapsedMs = 0L,
+                chunkCount = 0,
+                appCheckStatus = appCheckStatus,
+                cause = preflight.cause ?: IllegalStateException(preflight.detail.ifBlank { appCheckStatus }),
+                category = preflight.abortCategory
+            )
+        }
         try {
             withTimeout(AI_TIMEOUT_MS) {
                 chatModel.generateContentStream(fullPrompt).collect { chunk ->

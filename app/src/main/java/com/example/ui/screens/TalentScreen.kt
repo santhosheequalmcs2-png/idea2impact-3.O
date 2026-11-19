@@ -3,6 +3,7 @@ package com.example.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -22,25 +23,28 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SecondaryTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -51,9 +55,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.example.data.local.SavedProfileEntity
+import com.example.data.local.toBackendTalent
 import com.example.data.model.BackendInnovation
 import com.example.data.model.BackendTalent
 import com.example.data.model.ExactCategories
@@ -62,6 +70,7 @@ import com.example.data.model.TalentProfile
 import com.example.data.model.UiState
 import com.example.data.model.VerifiedOrganization
 import com.example.ui.components.BuilderConstellation3D
+import com.example.ui.components.EcosystemSearchField
 import com.example.ui.components.EditCollaboratorProfileDialog
 import com.example.ui.components.FundingOpportunitiesPanel
 import com.example.ui.components.ImportVerifiedJsonDialog
@@ -112,9 +121,14 @@ fun TalentScreen(
     onImportVerifiedJson: (String) -> Result<Int> = { Result.success(0) },
     onClearImportedDirectory: () -> Unit = {},
     onToggleSaveOrganization: (VerifiedOrganization) -> Unit = {},
-    onOpenMatches: () -> Unit = {}
+    onOpenMatches: () -> Unit = {},
+    savedProfiles: List<SavedProfileEntity> = emptyList(),
+    savedProfileIds: Set<String> = emptySet(),
+    onToggleSaveTalent: (BackendTalent) -> Unit = {},
+    onMessageTalent: (BackendTalent) -> Unit = {}
 ) {
     var selectedSubTab by remember { mutableIntStateOf(0) }
+    var showSavedProfilesOnly by remember { mutableStateOf(false) }
     var connectTarget by remember { mutableStateOf<BackendTalent?>(null) }
     var showEditProfileDialog by remember { mutableStateOf(false) }
     var showImportJsonDialog by remember { mutableStateOf(false) }
@@ -122,99 +136,191 @@ fun TalentScreen(
     val haptics = LocalHapticFeedbackManager.current
     val subTabs = listOf("People", "India Directory", "Funding")
 
-    Column(modifier = Modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                    Text(
-                        text = "Ecosystem & Collaborators",
-                        style = MaterialTheme.typography.headlineMedium
-                    )
-                    Text(
-                        text = "Builders, verified Indian organizations, and funding programs.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                OutlinedButton(
-                    onClick = {
-                        haptics.tap()
-                        onOpenMatches()
-                    },
-                    modifier = Modifier.heightIn(min = 48.dp).testTag("talent_open_matches_button")
-                ) {
-                    Text("Match")
-                }
-            }
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val isCompactMobile = maxWidth < 600.dp
 
-            SecondaryTabRow(selectedTabIndex = selectedSubTab) {
-                subTabs.forEachIndexed { idx, label ->
-                    Tab(
-                        selected = selectedSubTab == idx,
+        Column(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        horizontal = if (isCompactMobile) 14.dp else 16.dp,
+                        vertical = if (isCompactMobile) 4.dp else 10.dp
+                    ),
+                verticalArrangement = Arrangement.spacedBy(if (isCompactMobile) 4.dp else 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Text(
+                            text = "Ecosystem & Collaborators",
+                            style = if (isCompactMobile) {
+                                MaterialTheme.typography.titleMedium.copy(
+                                    fontSize = 16.sp,
+                                    lineHeight = 20.sp,
+                                    letterSpacing = (-0.2).sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            } else {
+                                MaterialTheme.typography.headlineMedium
+                            },
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = "Builders, verified Indian organizations, and funding programs.",
+                            style = if (isCompactMobile) {
+                                MaterialTheme.typography.bodySmall.copy(
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 14.5.sp
+                                )
+                            } else {
+                                MaterialTheme.typography.bodySmall
+                            },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    OutlinedButton(
                         onClick = {
                             haptics.tap()
-                            selectedSubTab = idx
+                            onOpenMatches()
                         },
-                        text = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        modifier = Modifier.testTag("ecosystem_subtab_$idx")
-                    )
+                        contentPadding = if (isCompactMobile) {
+                            PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        } else {
+                            PaddingValues(horizontal = 24.dp, vertical = 10.dp)
+                        },
+                        modifier = Modifier
+                            .heightIn(min = if (isCompactMobile) 42.dp else 48.dp)
+                            .testTag("talent_open_matches_button")
+                    ) {
+                        Text("Match", maxLines = 1, softWrap = false)
+                    }
                 }
-            }
-        }
 
-        when (selectedSubTab) {
-            0 -> {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedTextField(
-                        value = searchQuery,
-                        onValueChange = { searchQuery = it },
-                        placeholder = { Text("Search name, skill, role, or city...") },
-                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                        trailingIcon = {
-                            if (searchQuery.isNotBlank()) {
-                                IconButton(
-                                    onClick = {
-                                        haptics.tap()
-                                        searchQuery = ""
-                                    }
-                                ) {
-                                    Icon(Icons.Filled.Close, contentDescription = "Clear search")
-                                }
-                            }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp),
-                        modifier = Modifier.fillMaxWidth().testTag("talent_search_input")
-                    )
-
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(ExactCategories.talentRoles) { role ->
-                            FilterChip(
-                                selected = selectedRole == role,
-                                onClick = {
-                                    haptics.tap()
-                                    onRoleChange(role)
+                SecondaryTabRow(selectedTabIndex = selectedSubTab) {
+                    subTabs.forEachIndexed { idx, label ->
+                        Tab(
+                            selected = selectedSubTab == idx,
+                            onClick = {
+                                haptics.tap()
+                                selectedSubTab = idx
+                            },
+                            modifier = Modifier
+                                .heightIn(min = if (isCompactMobile) 38.dp else 48.dp)
+                                .testTag("ecosystem_subtab_$idx")
+                        ) {
+                            Text(
+                                text = label,
+                                style = if (isCompactMobile) {
+                                    MaterialTheme.typography.labelMedium.copy(
+                                        fontSize = 11.5.sp,
+                                        letterSpacing = (-0.25).sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                } else {
+                                    MaterialTheme.typography.labelLarge
                                 },
-                                label = { Text(role) },
-                                modifier = Modifier.heightIn(min = 40.dp)
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Clip,
+                                modifier = Modifier.padding(
+                                    horizontal = if (isCompactMobile) 2.dp else 12.dp,
+                                    vertical = if (isCompactMobile) 6.dp else 12.dp
+                                )
                             )
                         }
                     }
                 }
+            }
+
+            when (selectedSubTab) {
+                0 -> {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(
+                                start = if (isCompactMobile) 14.dp else 16.dp,
+                                end = if (isCompactMobile) 14.dp else 16.dp,
+                                top = if (isCompactMobile) 4.dp else 0.dp
+                            ),
+                        verticalArrangement = Arrangement.spacedBy(if (isCompactMobile) 6.dp else 8.dp)
+                    ) {
+                        EcosystemSearchField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholderText = "Search name, skill, role, or city...",
+                            clearContentDescription = "Clear search",
+                            compact = isCompactMobile,
+                            modifier = Modifier.testTag("talent_search_input")
+                        )
+
+                        CompositionLocalProvider(
+                            LocalMinimumInteractiveComponentSize provides if (isCompactMobile) 36.dp else 48.dp
+                        ) {
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(if (isCompactMobile) 6.dp else 8.dp)
+                            ) {
+                                item(key = "saved_profiles_chip") {
+                                    FilterChip(
+                                        selected = showSavedProfilesOnly,
+                                        onClick = {
+                                            haptics.tap()
+                                            showSavedProfilesOnly = !showSavedProfilesOnly
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = if (showSavedProfilesOnly) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        },
+                                        label = {
+                                            Text(
+                                                text = "Saved Profiles (${savedProfiles.size})",
+                                                maxLines = 1,
+                                                style = if (isCompactMobile) {
+                                                    MaterialTheme.typography.labelMedium
+                                                } else {
+                                                    MaterialTheme.typography.labelLarge
+                                                }
+                                            )
+                                        },
+                                        modifier = Modifier
+                                            .heightIn(min = if (isCompactMobile) 34.dp else 40.dp)
+                                            .testTag("talent_saved_profiles_chip")
+                                    )
+                                }
+                                items(ExactCategories.talentRoles) { role ->
+                                    FilterChip(
+                                        selected = !showSavedProfilesOnly && selectedRole == role,
+                                        onClick = {
+                                            haptics.tap()
+                                            showSavedProfilesOnly = false
+                                            onRoleChange(role)
+                                        },
+                                        label = {
+                                            Text(
+                                                text = role,
+                                                maxLines = 1,
+                                                style = if (isCompactMobile) {
+                                                    MaterialTheme.typography.labelMedium
+                                                } else {
+                                                    MaterialTheme.typography.labelLarge
+                                                }
+                                            )
+                                        },
+                                        modifier = Modifier.heightIn(min = if (isCompactMobile) 34.dp else 40.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                 PullToRefreshBox(
                     isRefreshing = false,
@@ -224,7 +330,112 @@ fun TalentScreen(
                     },
                     modifier = Modifier.weight(1f).fillMaxWidth()
                 ) {
-                    when (talentsState) {
+                    if (showSavedProfilesOnly) {
+                        val savedAsTalents = remember(savedProfiles, searchQuery) {
+                            val q = searchQuery.trim()
+                            val mapped = savedProfiles.map { it.toBackendTalent() }
+                            if (q.isBlank()) mapped
+                            else mapped.filter { t ->
+                                t.name.contains(q, ignoreCase = true) ||
+                                    t.role.contains(q, ignoreCase = true) ||
+                                    t.headline.contains(q, ignoreCase = true) ||
+                                    t.location.contains(q, ignoreCase = true) ||
+                                    t.skills.any { it.contains(q, ignoreCase = true) }
+                            }
+                        }
+                        LazyColumn(
+                            contentPadding = PaddingValues(
+                                horizontal = if (isCompactMobile) 14.dp else 16.dp,
+                                vertical = if (isCompactMobile) 8.dp else 16.dp
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(if (isCompactMobile) 8.dp else 12.dp),
+                            modifier = Modifier.fillMaxSize().testTag("talent_saved_profiles_list")
+                        ) {
+                            item {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Saved Profiles (${savedAsTalents.size})",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Stored locally",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            if (savedAsTalents.isEmpty()) {
+                                item {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.surface,
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                        shape = RoundedCornerShape(16.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("talent_saved_profiles_empty")
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(22.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Outlined.BookmarkBorder,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(30.dp)
+                                            )
+                                            Text(
+                                                text = if (searchQuery.isBlank()) "No Saved Profiles yet" else "No saved profiles match your search",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                text = "Tap the bookmark icon on any collaborator card to save their profile locally for quick follow-up.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            OutlinedButton(
+                                                onClick = {
+                                                    haptics.tap()
+                                                    searchQuery = ""
+                                                    showSavedProfilesOnly = false
+                                                },
+                                                modifier = Modifier.heightIn(min = 44.dp)
+                                            ) {
+                                                Text("Browse All Collaborators")
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                items(savedAsTalents, key = { "saved_${it.id}" }) { talent ->
+                                    TalentCardItem(
+                                        talent = talent,
+                                        isSaved = savedProfileIds.contains(talent.id),
+                                        onToggleSave = {
+                                            haptics.toggle(false)
+                                            onToggleSaveTalent(talent)
+                                        },
+                                        onMessage = {
+                                            haptics.tap()
+                                            onMessageTalent(talent)
+                                        },
+                                        onConnect = {
+                                            haptics.tap()
+                                            connectTarget = talent
+                                        }
+                                    )
+                                }
+                            }
+                            item { Spacer(Modifier.height(12.dp)) }
+                        }
+                    } else when (talentsState) {
                         UiState.Loading -> TalentSkeletonList()
                         is UiState.Error -> {
                             Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -267,8 +478,11 @@ fun TalentScreen(
                             }
 
                             LazyColumn(
-                                contentPadding = PaddingValues(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                                contentPadding = PaddingValues(
+                                    horizontal = if (isCompactMobile) 14.dp else 16.dp,
+                                    vertical = if (isCompactMobile) 8.dp else 16.dp
+                                ),
+                                verticalArrangement = Arrangement.spacedBy(if (isCompactMobile) 8.dp else 12.dp),
                                 modifier = Modifier.fillMaxSize()
                             ) {
                                 item(key = "my_collaborator_profile") {
@@ -276,21 +490,23 @@ fun TalentScreen(
                                         profile = myTalentProfile,
                                         isBusy = isBusy,
                                         onToggleVisibility = onToggleTalentVisibility,
-                                        onEditProfile = { showEditProfileDialog = true }
-                                    )
-                                }
-                                item(key = "talents_3d_constellation") {
-                                    BuilderConstellation3D(
-                                        selectedRole = selectedRole,
-                                        onCycleRole = {
-                                            haptics.tap()
-                                            val roles = ExactCategories.talentRoles
-                                            val idx = roles.indexOf(selectedRole)
-                                            onRoleChange(roles[(idx + 1) % roles.size])
-                                        }
+                                        onEditProfile = { showEditProfileDialog = true },
+                                        compact = isCompactMobile
                                     )
                                 }
                                 if (filtered.isEmpty()) {
+                                    item(key = "talents_3d_constellation") {
+                                        BuilderConstellation3D(
+                                            selectedRole = selectedRole,
+                                            onCycleRole = {
+                                                haptics.tap()
+                                                val roles = ExactCategories.talentRoles
+                                                val idx = roles.indexOf(selectedRole)
+                                                onRoleChange(roles[(idx + 1) % roles.size])
+                                            },
+                                            height = if (isCompactMobile) 118.dp else 178.dp
+                                        )
+                                    }
                                     item {
                                         Box(
                                             modifier = Modifier.fillMaxWidth().padding(24.dp),
@@ -321,9 +537,51 @@ fun TalentScreen(
                                         }
                                     }
                                 } else {
-                                    items(filtered, key = { it.id }) { talent ->
+                                    val firstTalent = filtered.first()
+                                    item(key = firstTalent.id) {
+                                        val isSaved = savedProfileIds.contains(firstTalent.id)
+                                        TalentCardItem(
+                                            talent = firstTalent,
+                                            isSaved = isSaved,
+                                            onToggleSave = {
+                                                haptics.toggle(!isSaved)
+                                                onToggleSaveTalent(firstTalent)
+                                            },
+                                            onMessage = {
+                                                haptics.tap()
+                                                onMessageTalent(firstTalent)
+                                            },
+                                            onConnect = {
+                                                haptics.tap()
+                                                connectTarget = firstTalent
+                                            }
+                                        )
+                                    }
+                                    item(key = "talents_3d_constellation") {
+                                        BuilderConstellation3D(
+                                            selectedRole = selectedRole,
+                                            onCycleRole = {
+                                                haptics.tap()
+                                                val roles = ExactCategories.talentRoles
+                                                val idx = roles.indexOf(selectedRole)
+                                                onRoleChange(roles[(idx + 1) % roles.size])
+                                            },
+                                            height = if (isCompactMobile) 118.dp else 178.dp
+                                        )
+                                    }
+                                    items(filtered.drop(1), key = { it.id }) { talent ->
+                                        val isSaved = savedProfileIds.contains(talent.id)
                                         TalentCardItem(
                                             talent = talent,
+                                            isSaved = isSaved,
+                                            onToggleSave = {
+                                                haptics.toggle(!isSaved)
+                                                onToggleSaveTalent(talent)
+                                            },
+                                            onMessage = {
+                                                haptics.tap()
+                                                onMessageTalent(talent)
+                                            },
                                             onConnect = {
                                                 haptics.tap()
                                                 connectTarget = talent
@@ -331,7 +589,7 @@ fun TalentScreen(
                                         )
                                     }
                                 }
-                                item { Spacer(Modifier.height(12.dp)) }
+                                item { Spacer(Modifier.height(84.dp)) }
                             }
                         }
                     }
@@ -357,6 +615,7 @@ fun TalentScreen(
                 )
             }
         }
+    }
     }
 
     val target = connectTarget
@@ -408,6 +667,9 @@ fun TalentScreen(
 @Composable
 private fun TalentCardItem(
     talent: BackendTalent,
+    isSaved: Boolean,
+    onToggleSave: () -> Unit,
+    onMessage: () -> Unit,
     onConnect: () -> Unit
 ) {
     Surface(
@@ -460,7 +722,8 @@ private fun TalentCardItem(
                             talent.name,
                             style = MaterialTheme.typography.titleMedium,
                             maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
                         if (talent.verified) {
                             Icon(
@@ -475,6 +738,23 @@ private fun TalentCardItem(
                         talent.role,
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                IconButton(
+                    onClick = onToggleSave,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .testTag("talent_bookmark_${talent.id}")
+                ) {
+                    Icon(
+                        imageVector = if (isSaved) Icons.Filled.Bookmark else Icons.Outlined.BookmarkBorder,
+                        contentDescription = if (isSaved) {
+                            "Remove ${talent.name} from Saved Profiles"
+                        } else {
+                            "Save ${talent.name} to Saved Profiles"
+                        },
+                        tint = if (isSaved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -515,6 +795,7 @@ private fun TalentCardItem(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
@@ -527,15 +808,35 @@ private fun TalentCardItem(
                     Text(
                         talent.location,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                OutlinedButton(
-                    onClick = onConnect,
-                    modifier = Modifier.heightIn(min = 48.dp)
-                ) {
-                    Text("Connect / Proposal")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(
+                        onClick = onMessage,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("talent_message_${talent.id}")
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Chat,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(5.dp))
+                        Text("Message", maxLines = 1)
+                    }
+                    OutlinedButton(
+                        onClick = onConnect,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                        modifier = Modifier.heightIn(min = 48.dp)
+                    ) {
+                        Text("Proposal", maxLines = 1)
+                    }
                 }
             }
         }

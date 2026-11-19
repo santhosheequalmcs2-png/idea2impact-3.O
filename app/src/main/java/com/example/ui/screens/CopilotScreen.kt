@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
@@ -92,15 +93,22 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.analytics.LocalAnalyticsTracker
 import com.example.data.model.AiRequestPhase
 import com.example.data.model.AiStatusUiState
 import com.example.data.model.BackendInnovation
 import com.example.data.model.CopilotMessage
+import com.example.ui.components.ChatStreamNetworkStatusPill
 import com.example.ui.components.MarkdownMessageContent
 import com.example.ui.components.NeuralCore3D
 import com.example.ui.theme.EmeraldSuccess
+import com.example.ui.theme.GoldAmber
+import com.example.ui.theme.RoseError
+import com.example.util.AiNetworkHealthStatus
 import com.example.util.LocalHapticFeedbackManager
+import com.example.util.NetworkDiagnosticManager
+import com.example.util.NetworkDiagnosticState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -149,6 +157,8 @@ fun CopilotScreen(
     focusedInnovation: BackendInnovation? = null,
     useFastModel: Boolean = false,
     canRegenerate: Boolean = false,
+    networkDiagnosticManager: NetworkDiagnosticManager? = null,
+    networkDiagnosticState: NetworkDiagnosticState? = null,
     onSelectFocusedInnovation: (BackendInnovation?) -> Unit = {},
     onToggleFastModel: (Boolean) -> Unit = {},
     onSaveApiKey: (String) -> Unit,
@@ -158,6 +168,7 @@ fun CopilotScreen(
     onRetryTimedOut: (String) -> Unit = {},
     onSwitchToFastAndRetry: (String) -> Unit = {},
     onSwitchToDefaultAiAndRetry: (String) -> Unit = {},
+    onOpenDiagnostics: () -> Unit = {},
     onResetChat: () -> Unit
 ) {
     var input by remember { mutableStateOf("") }
@@ -170,6 +181,19 @@ fun CopilotScreen(
     val haptics = LocalHapticFeedbackManager.current
     val analytics = LocalAnalyticsTracker.current
     val scope = rememberCoroutineScope()
+
+    val resolvedDiagnosticManager = remember(networkDiagnosticManager, context) {
+        networkDiagnosticManager ?: NetworkDiagnosticManager.getInstance(context)
+    }
+    val collectedDiagnosticState by resolvedDiagnosticManager.state.collectAsStateWithLifecycle()
+    val effectiveDiagnosticState = networkDiagnosticState ?: collectedDiagnosticState
+    val showStreamNetworkStatus = effectiveDiagnosticState.isChecking || effectiveDiagnosticState.health in setOf(
+        AiNetworkHealthStatus.CHECKING,
+        AiNetworkHealthStatus.NO_INTERNET,
+        AiNetworkHealthStatus.FIREBASE_UNREACHABLE,
+        AiNetworkHealthStatus.REQUESTS_BLOCKED,
+        AiNetworkHealthStatus.APP_CHECK_ISSUE
+    )
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -186,9 +210,10 @@ fun CopilotScreen(
     }
 
     val lastContentLen = messages.lastOrNull()?.content?.length ?: 0
-    LaunchedEffect(messages.size, lastContentLen, isLoading) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex + 1)
+    LaunchedEffect(messages.size, lastContentLen, isLoading, showStreamNetworkStatus) {
+        val lastItemIndex = messages.size + (if (showStreamNetworkStatus) 1 else 0)
+        if (lastItemIndex > 0) {
+            listState.animateScrollToItem(lastItemIndex)
         }
     }
 
@@ -236,6 +261,12 @@ fun CopilotScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
+                            val hasNetIssue = effectiveDiagnosticState.health in setOf(
+                                AiNetworkHealthStatus.NO_INTERNET,
+                                AiNetworkHealthStatus.FIREBASE_UNREACHABLE,
+                                AiNetworkHealthStatus.REQUESTS_BLOCKED,
+                                AiNetworkHealthStatus.APP_CHECK_ISSUE
+                            )
                             if (isLoading && activeStatusLabel.isNotBlank()) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(9.dp),
@@ -247,7 +278,13 @@ fun CopilotScreen(
                                     }
                                 )
                                 Text(
-                                    text = activeStatusLabel,
+                                    text = if (effectiveDiagnosticState.isChecking) {
+                                        NetworkDiagnosticManager.LABEL_CHECKING_CONNECTION
+                                    } else if (effectiveDiagnosticState.health == AiNetworkHealthStatus.NO_INTERNET) {
+                                        NetworkDiagnosticManager.LABEL_NO_INTERNET
+                                    } else {
+                                        activeStatusLabel
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.SemiBold,
@@ -258,6 +295,48 @@ fun CopilotScreen(
                                     },
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
+                                )
+                            } else if (effectiveDiagnosticState.isChecking) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(9.dp),
+                                    strokeWidth = 1.5.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = effectiveDiagnosticState.streamLabel.ifBlank {
+                                        NetworkDiagnosticManager.LABEL_CHECKING_CONNECTION
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.testTag("copilot_network_status_text")
+                                )
+                            } else if (hasNetIssue) {
+                                val issueColor = if (effectiveDiagnosticState.health == AiNetworkHealthStatus.APP_CHECK_ISSUE) {
+                                    GoldAmber
+                                } else {
+                                    RoseError
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(issueColor)
+                                )
+                                Text(
+                                    text = effectiveDiagnosticState.streamLabel.ifBlank {
+                                        effectiveDiagnosticState.statusMessage
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = issueColor,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.testTag("copilot_network_status_text")
                                 )
                             } else {
                                 Box(
@@ -329,13 +408,35 @@ fun CopilotScreen(
                         Surface(
                             onClick = {
                                 haptics.tap()
+                                onOpenDiagnostics()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("copilot_diagnostics_button")
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Filled.NetworkCheck,
+                                    contentDescription = "Run Network & Firebase Diagnostics",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
+                        Surface(
+                            onClick = {
+                                haptics.tap()
                                 showKeyDialog = true
                             },
                             shape = RoundedCornerShape(10.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
                             modifier = Modifier
-                                .size(34.dp)
+                                .size(48.dp)
                                 .testTag("copilot_key_settings")
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -658,6 +759,12 @@ fun CopilotScreen(
                             }
 
                             if (msg.content.isBlank() && isCurrentlyStreaming) {
+                                val bubbleStatusText = when {
+                                    effectiveDiagnosticState.isChecking -> NetworkDiagnosticManager.LABEL_CHECKING_CONNECTION
+                                    effectiveDiagnosticState.health == AiNetworkHealthStatus.NO_INTERNET ->
+                                        NetworkDiagnosticManager.LABEL_NO_INTERNET
+                                    else -> activeStatusLabel.ifBlank { "Thinking..." }
+                                }
                                 Column(
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                     modifier = Modifier.padding(vertical = 2.dp)
@@ -672,7 +779,7 @@ fun CopilotScreen(
                                             color = MaterialTheme.colorScheme.primary
                                         )
                                         Text(
-                                            text = activeStatusLabel.ifBlank { "Thinking..." },
+                                            text = bubbleStatusText,
                                             style = MaterialTheme.typography.bodyMedium,
                                             fontWeight = FontWeight.Medium,
                                             color = MaterialTheme.colorScheme.onSurface
@@ -823,11 +930,45 @@ fun CopilotScreen(
                                                 )
                                             }
                                         }
+
+                                        OutlinedButton(
+                                            onClick = {
+                                                haptics.tap()
+                                                onOpenDiagnostics()
+                                            },
+                                            enabled = !isLoading,
+                                            shape = RoundedCornerShape(12.dp),
+                                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(min = 48.dp)
+                                                .testTag("copilot_run_diagnostics_button")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.NetworkCheck,
+                                                contentDescription = "Check device internet and Firebase reachability",
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                text = "Run Connection Check",
+                                                style = MaterialTheme.typography.labelLarge
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                }
+            }
+
+            if (showStreamNetworkStatus) {
+                item(key = "chat_stream_network_status") {
+                    ChatStreamNetworkStatusPill(
+                        diagnosticState = effectiveDiagnosticState,
+                        onClick = onOpenDiagnostics
+                    )
                 }
             }
 

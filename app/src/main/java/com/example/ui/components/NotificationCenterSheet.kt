@@ -25,12 +25,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Campaign
+import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Handshake
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.TaskAlt
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -69,6 +72,9 @@ import java.util.Locale
 
 private enum class NotificationFilter(val label: String) {
     ALL("All"),
+    MESSAGES("Messages"),
+    COLLAB("Collaborations"),
+    TASKS("Tasks"),
     PROPOSALS("Proposals"),
     LIKES("Likes"),
     UPDATES("Updates")
@@ -95,6 +101,9 @@ fun NotificationCenterSheet(
     val filteredAlerts = remember(alerts, selectedFilter) {
         when (selectedFilter) {
             NotificationFilter.ALL -> alerts
+            NotificationFilter.MESSAGES -> alerts.filter { it.type == NotificationType.MESSAGE }
+            NotificationFilter.COLLAB -> alerts.filter { it.type == NotificationType.COLLABORATION }
+            NotificationFilter.TASKS -> alerts.filter { it.type == NotificationType.TASK }
             NotificationFilter.PROPOSALS -> alerts.filter { it.type == NotificationType.PROPOSAL }
             NotificationFilter.LIKES -> alerts.filter { it.type == NotificationType.LIKE }
             NotificationFilter.UPDATES -> alerts.filter { it.type == NotificationType.PLATFORM_UPDATE }
@@ -187,6 +196,9 @@ fun NotificationCenterSheet(
                 items(NotificationFilter.entries) { filter ->
                     val count = when (filter) {
                         NotificationFilter.ALL -> alerts.size
+                        NotificationFilter.MESSAGES -> alerts.count { it.type == NotificationType.MESSAGE }
+                        NotificationFilter.COLLAB -> alerts.count { it.type == NotificationType.COLLABORATION }
+                        NotificationFilter.TASKS -> alerts.count { it.type == NotificationType.TASK }
                         NotificationFilter.PROPOSALS -> alerts.count { it.type == NotificationType.PROPOSAL }
                         NotificationFilter.LIKES -> alerts.count { it.type == NotificationType.LIKE }
                         NotificationFilter.UPDATES -> alerts.count { it.type == NotificationType.PLATFORM_UPDATE }
@@ -386,14 +398,20 @@ private fun NotificationAlertCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
-                if (!alert.innovationId.isNullOrBlank()) {
+                val actionLabel = when {
+                    alert.targetRoute == "messages" -> "Open message"
+                    alert.targetRoute == "collaborations" -> "Open workspace"
+                    !alert.innovationId.isNullOrBlank() -> "Open innovation"
+                    else -> null
+                }
+                if (actionLabel != null) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         modifier = Modifier.padding(top = 2.dp)
                     ) {
                         Text(
-                            text = "Open innovation",
+                            text = actionLabel,
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.primary
@@ -432,6 +450,21 @@ private data class AlertVisualSpec(
 )
 
 private fun alertVisualSpec(type: NotificationType): AlertVisualSpec = when (type) {
+    NotificationType.MESSAGE -> AlertVisualSpec(
+        label = "Message",
+        icon = Icons.Filled.ChatBubble,
+        accent = CobaltBlue
+    )
+    NotificationType.COLLABORATION -> AlertVisualSpec(
+        label = "Collaboration",
+        icon = Icons.Filled.Groups,
+        accent = PurpleGlow
+    )
+    NotificationType.TASK -> AlertVisualSpec(
+        label = "Task",
+        icon = Icons.Filled.TaskAlt,
+        accent = EmeraldSuccess
+    )
     NotificationType.PROPOSAL -> AlertVisualSpec(
         label = "Proposal",
         icon = Icons.Filled.Handshake,

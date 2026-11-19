@@ -72,6 +72,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.model.BackendInnovation
 import com.example.data.model.CategoryItem
@@ -95,6 +96,8 @@ import com.example.util.StartupSoundPlayer
 fun HomeScreen(
     categories: List<CategoryItem>,
     featuredInnovations: List<BackendInnovation> = emptyList(),
+    talentsCount: Int = SeedCatalog.talents.size,
+    verifiedOrgsCount: Int = 0,
     entranceReady: Boolean = true,
     onOpenDetail: (BackendInnovation) -> Unit = {},
     onExploreInnovations: (category: String) -> Unit,
@@ -199,27 +202,60 @@ fun HomeScreen(
             }
         }
 
-        // 2. Trust Metric Strip (4 Columns)
+        // 2. Live Ecosystem Metric Strip (Responsive 2x2 on narrow phones, 4-column row on wide)
         item {
             AnimatedVisibility(
                 visible = metricsVisible,
                 enter = fadeIn(tween(460)) + slideInVertically(tween(460)) { it / 5 }
             ) {
-                Surface(
-                    shape = RoundedCornerShape(18.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 14.dp, horizontal = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly
+                val liveIdeasMetric = featuredInnovations.size.coerceAtLeast(categories.sumOf { it.count }).toString()
+                val liveBuildersMetric = talentsCount.coerceAtLeast(SeedCatalog.talents.size).toString()
+                val totalPipelineUsd = featuredInnovations.sumOf { it.fundingGoal }
+                val livePipelineMetric = if (totalPipelineUsd >= 1_000_000.0) {
+                    String.format(java.util.Locale.US, "$%.1fM", totalPipelineUsd / 1_000_000.0)
+                } else if (totalPipelineUsd >= 1_000.0) {
+                    String.format(java.util.Locale.US, "$%.0fK", totalPipelineUsd / 1_000.0)
+                } else {
+                    "8 Sectors"
+                }
+                val liveVerifiedOrgsMetric = if (verifiedOrgsCount > 0) verifiedOrgsCount.toString() else "NDA"
+
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    val useTwoByTwo = maxWidth < 480.dp
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                     ) {
-                        MetricColumn("40+", "Verified Innovations", Modifier.weight(1f))
-                        MetricColumn("\$12.8M", "Capital Pipeline", Modifier.weight(1f))
-                        MetricColumn("1,200+", "Active Builders & Engineers", Modifier.weight(1f))
-                        MetricColumn("98.4%", "Mutual NDA Compliance", Modifier.weight(1f))
+                        if (useTwoByTwo) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 12.dp, horizontal = 10.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Row(modifier = Modifier.fillMaxWidth()) {
+                                    MetricColumn(liveIdeasMetric, "Active Innovations", Modifier.weight(1f))
+                                    MetricColumn(livePipelineMetric, "Funding Pipeline", Modifier.weight(1f))
+                                }
+                                Row(modifier = Modifier.fillMaxWidth()) {
+                                    MetricColumn(liveBuildersMetric, "Listed Builders", Modifier.weight(1f))
+                                    MetricColumn(liveVerifiedOrgsMetric, if (verifiedOrgsCount > 0) "Verified Orgs" else "Mutual NDA Vault", Modifier.weight(1f))
+                                }
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 14.dp, horizontal = 8.dp),
+                                horizontalArrangement = Arrangement.SpaceEvenly
+                            ) {
+                                MetricColumn(liveIdeasMetric, "Active Innovations", Modifier.weight(1f))
+                                MetricColumn(livePipelineMetric, "Funding Pipeline", Modifier.weight(1f))
+                                MetricColumn(liveBuildersMetric, "Listed Builders", Modifier.weight(1f))
+                                MetricColumn(liveVerifiedOrgsMetric, if (verifiedOrgsCount > 0) "Verified Orgs" else "Mutual NDA Vault", Modifier.weight(1f))
+                            }
+                        }
                     }
                 }
             }
@@ -493,7 +529,7 @@ fun HomeScreen(
                                 .testTag("home_category_${cat.name.lowercase().replace(" ", "_")}")
                         ) {
                             Column(
-                                modifier = Modifier.padding(14.dp),
+                                modifier = Modifier.padding(12.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Row(
@@ -522,8 +558,12 @@ fun HomeScreen(
                                 }
                                 Text(
                                     text = cat.name,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    maxLines = 1,
+                                    style = MaterialTheme.typography.titleSmall.copy(
+                                        fontSize = 13.5.sp,
+                                        lineHeight = 17.sp
+                                    ),
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
@@ -567,7 +607,7 @@ fun HomeScreen(
             }
         }
 
-        item { Spacer(Modifier.height(12.dp)) }
+        item { Spacer(Modifier.height(84.dp)) }
     }
 }
 
@@ -625,11 +665,14 @@ private fun HeroCopyColumn(
                     append("global capital & elite builders.")
                 }
             },
-            style = MaterialTheme.typography.displayMedium
+            style = MaterialTheme.typography.displayMedium.copy(
+                fontSize = if (useSideBySideCtas) 25.sp else 28.sp,
+                lineHeight = if (useSideBySideCtas) 31.sp else 34.sp
+            )
         )
 
         Text(
-            text = "The international innovation marketplace connecting visionary creators, robotics architects, and angel funds. Turn raw concepts into protected, funded, high-impact reality.",
+            text = "Connect visionary creators, technical builders, and angel funds to turn raw concepts into NDA-protected reality.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )

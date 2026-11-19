@@ -299,6 +299,318 @@ service cloud.firestore {
                          incoming().userId == request.auth.uid;
         allow update, delete: if false;
       }
+
+      match /conversation_prefs/{conversationId} {
+        allow get, list: if isSignedIn() && request.auth.uid == userId;
+        allow create, update: if isSignedIn() && isValidId(userId) && isValidId(conversationId) &&
+                                 request.auth.uid == userId &&
+                                 isValidConversationPref(incoming()) &&
+                                 incoming().userId == request.auth.uid &&
+                                 incoming().conversationId == conversationId;
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(conversationId) && request.auth.uid == userId;
+      }
+
+      match /blocked_users/{blockedUid} {
+        allow get, list: if isSignedIn() && request.auth.uid == userId;
+        allow create: if isSignedIn() && isValidId(userId) && isValidId(blockedUid) &&
+                         request.auth.uid == userId &&
+                         isValidBlockedUser(incoming()) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().blockedUid == blockedUid;
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(blockedUid) && request.auth.uid == userId;
+      }
+    }
+
+    // --- Messaging & Collaboration Helpers ---
+
+    function isValidUidList(listVal, minItems, maxItems) {
+      return listVal is list && listVal.size() >= minItems && listVal.size() <= maxItems &&
+             (listVal.size() == 0 || isValidId(listVal[0]));
+    }
+
+    function isValidMapBounded(m, maxEntries) {
+      return m is map && m.keys().size() <= maxEntries;
+    }
+
+    function isValidPresence(data) {
+      return data.keys().hasAll(['userId', 'displayName', 'role', 'online', 'lastSeen', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'displayName', 'role', 'online', 'lastSeen', 'updatedAt']) &&
+             isValidId(data.userId) &&
+             isBoundedString(data.displayName, 1, 120) &&
+             isBoundedString(data.role, 1, 60) &&
+             data.online is bool &&
+             data.lastSeen is timestamp && data.lastSeen <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidConversationPref(data) {
+      return data.keys().hasAll(['userId', 'conversationId', 'pinned', 'muted', 'archived', 'updatedAt']) &&
+             data.keys().hasOnly(['userId', 'conversationId', 'pinned', 'muted', 'archived', 'updatedAt']) &&
+             isValidId(data.userId) &&
+             isValidId(data.conversationId) &&
+             data.pinned is bool &&
+             data.muted is bool &&
+             data.archived is bool &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidBlockedUser(data) {
+      return data.keys().hasAll(['userId', 'blockedUid', 'blockedName', 'createdAt']) &&
+             data.keys().hasOnly(['userId', 'blockedUid', 'blockedName', 'reason', 'createdAt']) &&
+             isValidId(data.userId) &&
+             isValidId(data.blockedUid) &&
+             isBoundedString(data.blockedName, 1, 120) &&
+             (!('reason' in data) || data.reason == null || isBoundedString(data.reason, 0, 300)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidModerationReport(data) {
+      return data.keys().hasAll(['reporterId', 'targetUserId', 'reason', 'createdAt']) &&
+             data.keys().hasOnly(['reporterId', 'targetUserId', 'conversationId', 'reason', 'details', 'createdAt']) &&
+             isValidId(data.reporterId) &&
+             isValidId(data.targetUserId) &&
+             (!('conversationId' in data) || data.conversationId == null || isValidId(data.conversationId)) &&
+             isBoundedString(data.reason, 2, 160) &&
+             (!('details' in data) || data.details == null || isBoundedString(data.details, 0, 1500)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidConversation(data) {
+      return data.keys().hasAll([
+               'type', 'title', 'createdBy', 'adminUids', 'memberUids',
+               'contextType', 'lastMessagePreview', 'lastSenderId', 'lastSenderName',
+               'lastMessageAt', 'unreadCounts', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'type', 'title', 'avatarUrl', 'createdBy', 'adminUids', 'memberUids',
+               'memberSummaries', 'contextType', 'innovationId', 'innovationTitle',
+               'collaborationId', 'lastMessagePreview', 'lastSenderId', 'lastSenderName',
+               'lastMessageAt', 'unreadCounts', 'typingByUid', 'blockedByUids',
+               'createdAt', 'updatedAt'
+             ]) &&
+             data.type in ['DIRECT', 'GROUP', 'PROJECT'] &&
+             isBoundedString(data.title, 0, 140) &&
+             (!('avatarUrl' in data) || data.avatarUrl == null || isBoundedString(data.avatarUrl, 0, 1000)) &&
+             isValidId(data.createdBy) &&
+             isValidUidList(data.adminUids, 1, 50) &&
+             isValidUidList(data.memberUids, 1, 50) &&
+             (!('memberSummaries' in data) || isValidMapBounded(data.memberSummaries, 50)) &&
+             data.contextType in ['GENERAL', 'INNOVATION', 'PROPOSAL', 'COLLABORATION'] &&
+             (!('innovationId' in data) || data.innovationId == null || isBoundedString(data.innovationId, 0, 128)) &&
+             (!('innovationTitle' in data) || data.innovationTitle == null || isBoundedString(data.innovationTitle, 0, 160)) &&
+             (!('collaborationId' in data) || data.collaborationId == null || isBoundedString(data.collaborationId, 0, 128)) &&
+             isBoundedString(data.lastMessagePreview, 0, 300) &&
+             isBoundedString(data.lastSenderId, 0, 128) &&
+             isBoundedString(data.lastSenderName, 0, 120) &&
+             data.lastMessageAt is timestamp && data.lastMessageAt <= request.time &&
+             isValidMapBounded(data.unreadCounts, 50) &&
+             (!('typingByUid' in data) || isValidMapBounded(data.typingByUid, 50)) &&
+             (!('blockedByUids' in data) || isValidUidList(data.blockedByUids, 0, 50)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidChatMessage(data) {
+      return data.keys().hasAll([
+               'conversationId', 'senderId', 'senderName', 'memberUids', 'messageType',
+               'body', 'reactions', 'readByUids', 'deliveredToUids',
+               'edited', 'deleted', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'conversationId', 'senderId', 'senderName', 'senderRole', 'senderAvatar',
+               'memberUids', 'messageType', 'body', 'replyToMessageId', 'replyToSenderName',
+               'replyToSnippet', 'attachmentName', 'attachmentMimeType', 'attachmentSizeBytes',
+               'attachmentPreviewBase64', 'attachmentUrl', 'sharedInnovationId',
+               'sharedInnovationTitle', 'sharedCollaborationId', 'reactions',
+               'readByUids', 'deliveredToUids', 'edited', 'deleted', 'createdAt', 'updatedAt'
+             ]) &&
+             isValidId(data.conversationId) &&
+             isValidId(data.senderId) &&
+             isBoundedString(data.senderName, 1, 120) &&
+             (!('senderRole' in data) || data.senderRole == null || isBoundedString(data.senderRole, 0, 60)) &&
+             (!('senderAvatar' in data) || data.senderAvatar == null || isBoundedString(data.senderAvatar, 0, 1000)) &&
+             isValidUidList(data.memberUids, 1, 50) &&
+             data.messageType in ['TEXT', 'IMAGE', 'DOCUMENT', 'LINK', 'COLLABORATION_INVITE', 'SYSTEM'] &&
+             isBoundedString(data.body, 0, 4000) &&
+             (!('replyToMessageId' in data) || data.replyToMessageId == null || isBoundedString(data.replyToMessageId, 0, 128)) &&
+             (!('replyToSenderName' in data) || data.replyToSenderName == null || isBoundedString(data.replyToSenderName, 0, 120)) &&
+             (!('replyToSnippet' in data) || data.replyToSnippet == null || isBoundedString(data.replyToSnippet, 0, 300)) &&
+             (!('attachmentName' in data) || data.attachmentName == null || isBoundedString(data.attachmentName, 0, 200)) &&
+             (!('attachmentMimeType' in data) || data.attachmentMimeType == null || isBoundedString(data.attachmentMimeType, 0, 100)) &&
+             (!('attachmentSizeBytes' in data) || data.attachmentSizeBytes == null || (data.attachmentSizeBytes is int && data.attachmentSizeBytes >= 0 && data.attachmentSizeBytes <= 104857600)) &&
+             (!('attachmentPreviewBase64' in data) || data.attachmentPreviewBase64 == null || isBoundedString(data.attachmentPreviewBase64, 0, 220000)) &&
+             (!('attachmentUrl' in data) || data.attachmentUrl == null || isBoundedString(data.attachmentUrl, 0, 1000)) &&
+             (!('sharedInnovationId' in data) || data.sharedInnovationId == null || isBoundedString(data.sharedInnovationId, 0, 128)) &&
+             (!('sharedInnovationTitle' in data) || data.sharedInnovationTitle == null || isBoundedString(data.sharedInnovationTitle, 0, 160)) &&
+             (!('sharedCollaborationId' in data) || data.sharedCollaborationId == null || isBoundedString(data.sharedCollaborationId, 0, 128)) &&
+             isValidMapBounded(data.reactions, 50) &&
+             isValidUidList(data.readByUids, 0, 50) &&
+             isValidUidList(data.deliveredToUids, 0, 50) &&
+             data.edited is bool &&
+             data.deleted is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCollabProject(data) {
+      return data.keys().hasAll([
+               'title', 'description', 'category', 'requiredSkills', 'objectives',
+               'expectedDeliverables', 'proposedTimeline', 'status', 'ownerId',
+               'adminUids', 'memberUids', 'memberRoles', 'memberNames',
+               'progressPercent', 'totalTasks', 'completedTasks', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'title', 'description', 'category', 'relatedInnovationId', 'relatedInnovationTitle',
+               'requiredSkills', 'objectives', 'expectedDeliverables', 'proposedTimeline',
+               'referenceLinks', 'status', 'ownerId', 'adminUids', 'memberUids',
+               'memberRoles', 'memberNames', 'conversationId', 'progressPercent',
+               'totalTasks', 'completedTasks', 'createdAt', 'updatedAt'
+             ]) &&
+             isBoundedString(data.title, 3, 140) &&
+             isBoundedString(data.description, 5, 4000) &&
+             isBoundedString(data.category, 2, 80) &&
+             (!('relatedInnovationId' in data) || data.relatedInnovationId == null || isBoundedString(data.relatedInnovationId, 0, 128)) &&
+             (!('relatedInnovationTitle' in data) || data.relatedInnovationTitle == null || isBoundedString(data.relatedInnovationTitle, 0, 160)) &&
+             isValidStringList(data.requiredSkills, 25) &&
+             isBoundedString(data.objectives, 0, 2000) &&
+             isBoundedString(data.expectedDeliverables, 0, 2000) &&
+             isBoundedString(data.proposedTimeline, 0, 300) &&
+             (!('referenceLinks' in data) || (data.referenceLinks is list && data.referenceLinks.size() <= 10)) &&
+             data.status in ['PLANNING', 'ACTIVE', 'REVIEW', 'COMPLETED', 'ON_HOLD'] &&
+             isValidId(data.ownerId) &&
+             isValidUidList(data.adminUids, 1, 50) &&
+             isValidUidList(data.memberUids, 1, 50) &&
+             isValidMapBounded(data.memberRoles, 50) &&
+             isValidMapBounded(data.memberNames, 50) &&
+             (!('conversationId' in data) || data.conversationId == null || isBoundedString(data.conversationId, 0, 128)) &&
+             data.progressPercent is int && data.progressPercent >= 0 && data.progressPercent <= 100 &&
+             data.totalTasks is int && data.totalTasks >= 0 &&
+             data.completedTasks is int && data.completedTasks >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCollabInvite(data) {
+      return data.keys().hasAll([
+               'projectId', 'projectTitle', 'projectCategory', 'inviterId', 'inviterName',
+               'inviteeId', 'inviteeName', 'proposedRole', 'message', 'status', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'projectId', 'projectTitle', 'projectCategory', 'inviterId', 'inviterName',
+               'inviteeId', 'inviteeName', 'proposedRole', 'message', 'conversationId',
+               'status', 'createdAt', 'updatedAt'
+             ]) &&
+             isValidId(data.projectId) &&
+             isBoundedString(data.projectTitle, 2, 140) &&
+             isBoundedString(data.projectCategory, 2, 80) &&
+             isValidId(data.inviterId) &&
+             isBoundedString(data.inviterName, 1, 120) &&
+             isValidId(data.inviteeId) &&
+             isBoundedString(data.inviteeName, 1, 120) &&
+             isBoundedString(data.proposedRole, 1, 80) &&
+             isBoundedString(data.message, 0, 1000) &&
+             (!('conversationId' in data) || data.conversationId == null || isBoundedString(data.conversationId, 0, 128)) &&
+             data.status in ['PENDING', 'ACCEPTED', 'DECLINED', 'CANCELLED'] &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidCollabTask(data) {
+      return data.keys().hasAll([
+               'projectId', 'memberUids', 'title', 'description', 'createdBy',
+               'priority', 'status', 'commentCount', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'projectId', 'memberUids', 'title', 'description', 'assigneeUid', 'assigneeName',
+               'createdBy', 'priority', 'status', 'dueAtEpochMs', 'attachmentName',
+               'commentCount', 'createdAt', 'updatedAt'
+             ]) &&
+             isValidId(data.projectId) &&
+             isValidUidList(data.memberUids, 1, 50) &&
+             isBoundedString(data.title, 2, 160) &&
+             isBoundedString(data.description, 0, 2000) &&
+             (!('assigneeUid' in data) || data.assigneeUid == null || isBoundedString(data.assigneeUid, 0, 128)) &&
+             (!('assigneeName' in data) || data.assigneeName == null || isBoundedString(data.assigneeName, 0, 120)) &&
+             isValidId(data.createdBy) &&
+             data.priority in ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] &&
+             data.status in ['TODO', 'IN_PROGRESS', 'IN_REVIEW', 'COMPLETED'] &&
+             (!('dueAtEpochMs' in data) || data.dueAtEpochMs == null || (data.dueAtEpochMs is int && data.dueAtEpochMs >= 0)) &&
+             (!('attachmentName' in data) || data.attachmentName == null || isBoundedString(data.attachmentName, 0, 200)) &&
+             data.commentCount is int && data.commentCount >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidTaskComment(data) {
+      return data.keys().hasAll(['projectId', 'taskId', 'memberUids', 'authorId', 'authorName', 'body', 'createdAt']) &&
+             data.keys().hasOnly(['projectId', 'taskId', 'memberUids', 'authorId', 'authorName', 'body', 'createdAt']) &&
+             isValidId(data.projectId) &&
+             isValidId(data.taskId) &&
+             isValidUidList(data.memberUids, 1, 50) &&
+             isValidId(data.authorId) &&
+             isBoundedString(data.authorName, 1, 120) &&
+             isBoundedString(data.body, 1, 1500) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidCollabFile(data) {
+      return data.keys().hasAll(['projectId', 'memberUids', 'uploadedBy', 'uploadedByName', 'fileName', 'mimeType', 'sizeBytes', 'createdAt']) &&
+             data.keys().hasOnly(['projectId', 'memberUids', 'uploadedBy', 'uploadedByName', 'fileName', 'mimeType', 'sizeBytes', 'referenceUrl', 'previewBase64', 'notes', 'createdAt']) &&
+             isValidId(data.projectId) &&
+             isValidUidList(data.memberUids, 1, 50) &&
+             isValidId(data.uploadedBy) &&
+             isBoundedString(data.uploadedByName, 1, 120) &&
+             isBoundedString(data.fileName, 1, 200) &&
+             isBoundedString(data.mimeType, 1, 120) &&
+             data.sizeBytes is int && data.sizeBytes >= 0 && data.sizeBytes <= 104857600 &&
+             (!('referenceUrl' in data) || data.referenceUrl == null || isBoundedString(data.referenceUrl, 0, 1000)) &&
+             (!('previewBase64' in data) || data.previewBase64 == null || isBoundedString(data.previewBase64, 0, 220000)) &&
+             (!('notes' in data) || data.notes == null || isBoundedString(data.notes, 0, 500)) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidCollabActivity(data) {
+      return data.keys().hasAll(['projectId', 'memberUids', 'actorId', 'actorName', 'actionType', 'summary', 'createdAt']) &&
+             data.keys().hasOnly(['projectId', 'memberUids', 'actorId', 'actorName', 'actionType', 'summary', 'createdAt']) &&
+             isValidId(data.projectId) &&
+             isValidUidList(data.memberUids, 1, 50) &&
+             isValidId(data.actorId) &&
+             isBoundedString(data.actorName, 1, 120) &&
+             isBoundedString(data.actionType, 2, 60) &&
+             isBoundedString(data.summary, 2, 500) &&
+             data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidCloudNotification(data) {
+      return data.keys().hasAll([
+               'recipientId', 'senderId', 'senderName', 'notificationType',
+               'title', 'body', 'targetType', 'targetId', 'read', 'createdAt', 'updatedAt'
+             ]) &&
+             data.keys().hasOnly([
+               'recipientId', 'senderId', 'senderName', 'notificationType',
+               'title', 'body', 'targetType', 'targetId', 'dedupeKey', 'read', 'createdAt', 'updatedAt'
+             ]) &&
+             isValidId(data.recipientId) &&
+             isValidId(data.senderId) &&
+             isBoundedString(data.senderName, 1, 120) &&
+             data.notificationType in ['MESSAGE', 'COLLAB_INVITE', 'COLLAB_RESPONSE', 'TASK_ASSIGNED', 'TASK_COMPLETED', 'DEADLINE_ALERT', 'PROJECT_UPDATE', 'PROPOSAL'] &&
+             isBoundedString(data.title, 1, 160) &&
+             isBoundedString(data.body, 1, 600) &&
+             data.targetType in ['CONVERSATION', 'COLLABORATION', 'INNOVATION'] &&
+             isBoundedString(data.targetId, 1, 128) &&
+             (!('dedupeKey' in data) || data.dedupeKey == null || isBoundedString(data.dedupeKey, 0, 160)) &&
+             data.read is bool &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isConvMember(conversationId) {
+      return request.auth.uid in get(/databases/$(database)/documents/conversations/$(conversationId)).data.memberUids;
+    }
+
+    function isProjectMember(projectId) {
+      return request.auth.uid in get(/databases/$(database)/documents/collaboration_projects/$(projectId)).data.memberUids;
     }
 
     // 2. Innovations & Comments
@@ -415,6 +727,254 @@ service cloud.firestore {
                      (existing().verificationStatus in ['VERIFIED', 'NEEDS_REVIEW'] || isAdmin());
       allow create, update: if isAdmin() && isValidId(orgId) && isValidVerifiedOrganization(incoming());
       allow delete: if isAdmin() && isValidId(orgId);
+    }
+
+    // 6. Real-Time User Presence
+    match /presence/{userId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(userId) &&
+                               request.auth.uid == userId &&
+                               isValidPresence(incoming()) &&
+                               incoming().userId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    // 7. Professional Messaging & Group Threads
+    match /conversations/{conversationId} {
+      allow get: if isSignedIn() && isValidId(conversationId) &&
+                    ((resource == null && conversationId.matches('^dm_.*' + request.auth.uid + '.*$')) ||
+                     (resource != null && request.auth.uid in existing().memberUids));
+      allow list: if isSignedIn() && request.auth.uid in existing().memberUids;
+      allow create: if isSignedIn() && isValidId(conversationId) &&
+                       isValidConversation(incoming()) &&
+                       incoming().createdBy == request.auth.uid &&
+                       request.auth.uid in incoming().adminUids &&
+                       request.auth.uid in incoming().memberUids;
+      allow update: if isSignedIn() && isValidId(conversationId) &&
+                       isValidConversation(incoming()) &&
+                       incoming().createdBy == existing().createdBy &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().type == existing().type && (
+                         // Case A: Active member sends message, marks read, updates typing/block, or links collaboration
+                         (request.auth.uid in existing().memberUids &&
+                          incoming().memberUids == existing().memberUids &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'lastMessagePreview', 'lastSenderId', 'lastSenderName', 'lastMessageAt',
+                            'unreadCounts', 'typingByUid', 'blockedByUids', 'collaborationId',
+                            'innovationId', 'innovationTitle', 'updatedAt'
+                          ])) ||
+                         // Case B: Group/Project admin manages title, avatar, admins, and members
+                         (request.auth.uid in existing().adminUids &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'title', 'avatarUrl', 'adminUids', 'memberUids', 'memberSummaries',
+                            'collaborationId', 'updatedAt'
+                          ])) ||
+                         // Case C: Non-creator member leaves group
+                         (request.auth.uid in existing().memberUids &&
+                          request.auth.uid != existing().createdBy &&
+                          !(request.auth.uid in incoming().memberUids) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'memberUids', 'adminUids', 'unreadCounts', 'updatedAt'
+                          ])) ||
+                         // Case D: Accepted collaboration invitee joins linked project conversation atomically
+                         (existing().collaborationId != null &&
+                          !(request.auth.uid in existing().memberUids) &&
+                          request.auth.uid in incoming().memberUids &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'memberUids', 'memberSummaries', 'unreadCounts', 'updatedAt'
+                          ]) &&
+                          getAfter(/databases/$(database)/documents/collaboration_invitations/$(existing().collaborationId + '_' + request.auth.uid)).data.status == 'ACCEPTED')
+                       );
+      allow delete: if isSignedIn() && isValidId(conversationId) && existing().createdBy == request.auth.uid;
+
+      match /messages/{messageId} {
+        allow get: if isSignedIn() && isValidId(conversationId) && isValidId(messageId) &&
+                      resource != null && isConvMember(conversationId);
+        allow list: if isSignedIn() && isValidId(conversationId) &&
+                       request.auth.uid in existing().memberUids;
+        allow create: if isSignedIn() && isValidId(conversationId) && isValidId(messageId) &&
+                         isConvMember(conversationId) &&
+                         isValidChatMessage(incoming()) &&
+                         incoming().conversationId == conversationId &&
+                         incoming().senderId == request.auth.uid &&
+                         incoming().edited == false &&
+                         incoming().deleted == false;
+        allow update: if isSignedIn() && isValidId(conversationId) && isValidId(messageId) &&
+                         isConvMember(conversationId) &&
+                         isValidChatMessage(incoming()) &&
+                         incoming().conversationId == existing().conversationId &&
+                         incoming().senderId == existing().senderId &&
+                         incoming().createdAt == existing().createdAt && (
+                           (existing().senderId == request.auth.uid &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['body', 'edited', 'deleted', 'updatedAt'])) ||
+                           incoming().diff(existing()).affectedKeys().hasOnly(['reactions', 'readByUids', 'deliveredToUids', 'updatedAt'])
+                         );
+        allow delete: if isSignedIn() && isValidId(conversationId) && isValidId(messageId) &&
+                         existing().senderId == request.auth.uid && isConvMember(conversationId);
+      }
+    }
+
+    // 8. Safety Reports
+    match /reports/{reportId} {
+      allow get, list: if isAdmin();
+      allow create: if isSignedIn() && isValidId(reportId) &&
+                       isValidModerationReport(incoming()) &&
+                       incoming().reporterId == request.auth.uid;
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(reportId);
+    }
+
+    // 9. Structured Collaboration Workspaces, Tasks, Files & Invitations
+    match /collaboration_projects/{projectId} {
+      allow get, list: if isSignedIn() && request.auth.uid in existing().memberUids;
+      allow create: if isSignedIn() && isValidId(projectId) &&
+                       isValidCollabProject(incoming()) &&
+                       incoming().ownerId == request.auth.uid &&
+                       request.auth.uid in incoming().adminUids &&
+                       request.auth.uid in incoming().memberUids;
+      allow update: if isSignedIn() && isValidId(projectId) &&
+                       isValidCollabProject(incoming()) &&
+                       incoming().ownerId == existing().ownerId &&
+                       incoming().createdAt == existing().createdAt && (
+                         (request.auth.uid in existing().adminUids &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'title', 'description', 'category', 'relatedInnovationId',
+                            'relatedInnovationTitle', 'requiredSkills', 'objectives',
+                            'expectedDeliverables', 'proposedTimeline', 'referenceLinks',
+                            'status', 'adminUids', 'memberUids', 'memberRoles', 'memberNames',
+                            'conversationId', 'progressPercent', 'totalTasks', 'completedTasks', 'updatedAt'
+                          ])) ||
+                         (request.auth.uid in existing().memberUids &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'progressPercent', 'totalTasks', 'completedTasks', 'status', 'conversationId', 'updatedAt'
+                          ])) ||
+                         (request.auth.uid in existing().memberUids &&
+                          request.auth.uid != existing().ownerId &&
+                          !(request.auth.uid in incoming().memberUids) &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'memberUids', 'adminUids', 'memberRoles', 'memberNames', 'updatedAt'
+                          ])) ||
+                         (!(request.auth.uid in existing().memberUids) &&
+                          request.auth.uid in incoming().memberUids &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'memberUids', 'memberRoles', 'memberNames', 'updatedAt'
+                          ]) &&
+                          getAfter(/databases/$(database)/documents/collaboration_invitations/$(projectId + '_' + request.auth.uid)).data.status == 'ACCEPTED')
+                       );
+      allow delete: if isSignedIn() && isValidId(projectId) && existing().ownerId == request.auth.uid;
+
+      match /tasks/{taskId} {
+        allow get: if isSignedIn() && isValidId(projectId) && isValidId(taskId) &&
+                      resource != null && isProjectMember(projectId);
+        allow list: if isSignedIn() && isValidId(projectId) &&
+                       request.auth.uid in existing().memberUids;
+        allow create: if isSignedIn() && isValidId(projectId) && isValidId(taskId) &&
+                         isProjectMember(projectId) &&
+                         isValidCollabTask(incoming()) &&
+                         incoming().projectId == projectId &&
+                         incoming().createdBy == request.auth.uid;
+        allow update: if isSignedIn() && isValidId(projectId) && isValidId(taskId) &&
+                         isProjectMember(projectId) &&
+                         isValidCollabTask(incoming()) &&
+                         incoming().projectId == existing().projectId &&
+                         incoming().createdBy == existing().createdBy &&
+                         incoming().createdAt == existing().createdAt;
+        allow delete: if isSignedIn() && isValidId(projectId) && isValidId(taskId) &&
+                         isProjectMember(projectId) &&
+                         (existing().createdBy == request.auth.uid ||
+                          get(/databases/$(database)/documents/collaboration_projects/$(projectId)).data.ownerId == request.auth.uid);
+
+        match /comments/{commentId} {
+          allow get: if isSignedIn() && isValidId(projectId) && isValidId(taskId) && isValidId(commentId) &&
+                        resource != null && isProjectMember(projectId);
+          allow list: if isSignedIn() && isValidId(projectId) && isValidId(taskId) &&
+                         request.auth.uid in existing().memberUids;
+          allow create: if isSignedIn() && isValidId(projectId) && isValidId(taskId) && isValidId(commentId) &&
+                           isProjectMember(projectId) &&
+                           isValidTaskComment(incoming()) &&
+                           incoming().projectId == projectId &&
+                           incoming().taskId == taskId &&
+                           incoming().authorId == request.auth.uid;
+          allow update: if false;
+          allow delete: if isSignedIn() && isValidId(projectId) && isValidId(taskId) && isValidId(commentId) &&
+                           isProjectMember(projectId) && existing().authorId == request.auth.uid;
+        }
+      }
+
+      match /files/{fileId} {
+        allow get: if isSignedIn() && isValidId(projectId) && isValidId(fileId) &&
+                      resource != null && isProjectMember(projectId);
+        allow list: if isSignedIn() && isValidId(projectId) &&
+                       request.auth.uid in existing().memberUids;
+        allow create: if isSignedIn() && isValidId(projectId) && isValidId(fileId) &&
+                         isProjectMember(projectId) &&
+                         isValidCollabFile(incoming()) &&
+                         incoming().projectId == projectId &&
+                         incoming().uploadedBy == request.auth.uid;
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(projectId) && isValidId(fileId) &&
+                         isProjectMember(projectId) &&
+                         (existing().uploadedBy == request.auth.uid ||
+                          get(/databases/$(database)/documents/collaboration_projects/$(projectId)).data.ownerId == request.auth.uid);
+      }
+
+      match /activity/{activityId} {
+        allow get: if isSignedIn() && isValidId(projectId) && isValidId(activityId) &&
+                      resource != null && isProjectMember(projectId);
+        allow list: if isSignedIn() && isValidId(projectId) &&
+                       request.auth.uid in existing().memberUids;
+        allow create: if isSignedIn() && isValidId(projectId) && isValidId(activityId) &&
+                         isProjectMember(projectId) &&
+                         isValidCollabActivity(incoming()) &&
+                         incoming().projectId == projectId &&
+                         incoming().actorId == request.auth.uid;
+        allow update, delete: if false;
+      }
+    }
+
+    match /collaboration_invitations/{inviteId} {
+      allow get, list: if isSignedIn() &&
+                         (existing().inviterId == request.auth.uid || existing().inviteeId == request.auth.uid);
+      allow create: if isSignedIn() && isValidId(inviteId) &&
+                       isValidCollabInvite(incoming()) &&
+                       incoming().inviterId == request.auth.uid &&
+                       incoming().status == 'PENDING' &&
+                       inviteId == (incoming().projectId + '_' + incoming().inviteeId) &&
+                       request.auth.uid in getAfter(/databases/$(database)/documents/collaboration_projects/$(incoming().projectId)).data.memberUids;
+      allow update: if isSignedIn() && isValidId(inviteId) &&
+                       isValidCollabInvite(incoming()) &&
+                       incoming().projectId == existing().projectId &&
+                       incoming().inviterId == existing().inviterId &&
+                       incoming().inviteeId == existing().inviteeId &&
+                       incoming().createdAt == existing().createdAt &&
+                       existing().status == 'PENDING' && (
+                         (request.auth.uid == existing().inviteeId &&
+                          incoming().status in ['ACCEPTED', 'DECLINED'] &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+                         (request.auth.uid == existing().inviterId &&
+                          incoming().status in ['CANCELLED', 'PENDING'] &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'proposedRole', 'message', 'updatedAt']))
+                       );
+      allow delete: if isSignedIn() && isValidId(inviteId) &&
+                       (existing().inviterId == request.auth.uid || existing().inviteeId == request.auth.uid);
+    }
+
+    // 10. Real-Time Cloud Notifications
+    match /app_notifications/{notificationId} {
+      allow get, list: if isSignedIn() && existing().recipientId == request.auth.uid;
+      allow create: if isSignedIn() && isValidId(notificationId) &&
+                       isValidCloudNotification(incoming()) &&
+                       incoming().senderId == request.auth.uid &&
+                       incoming().read == false;
+      allow update: if isSignedIn() && isValidId(notificationId) &&
+                       existing().recipientId == request.auth.uid &&
+                       isValidCloudNotification(incoming()) &&
+                       incoming().recipientId == existing().recipientId &&
+                       incoming().senderId == existing().senderId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['read', 'updatedAt']);
+      allow delete: if isSignedIn() && isValidId(notificationId) &&
+                       existing().recipientId == request.auth.uid;
     }
   }
 }

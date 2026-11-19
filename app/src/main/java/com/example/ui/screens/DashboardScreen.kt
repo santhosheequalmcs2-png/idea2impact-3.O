@@ -25,7 +25,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Handshake
 import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.Login
 import androidx.compose.material.icons.filled.Refresh
@@ -37,7 +39,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.SecondaryTabRow
+import androidx.compose.material3.SecondaryScrollableTabRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -55,6 +57,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.data.local.IdeaPortfolioEntity
+import com.example.data.local.InvestorPortfolioEntity
+import com.example.data.local.SavedProfileEntity
 import com.example.data.model.AuthUser
 import com.example.data.model.BackendInnovation
 import com.example.data.model.DashboardStats
@@ -62,10 +67,15 @@ import com.example.data.model.Proposal
 import com.example.data.model.UiState
 import com.example.ui.components.BackendInnovationCard
 import com.example.ui.components.CapitalPipeline3D
+import com.example.ui.components.FirebaseDiagnosticsCard
+import com.example.ui.components.IdeaPortfolioSection
 import com.example.ui.components.InnovationCardSkeleton
+import com.example.ui.components.InvestorPortfolioSection
+import com.example.ui.components.SavedProfilesSection
 import com.example.ui.theme.EmeraldSuccess
 import com.example.ui.theme.GoldAmber
 import com.example.ui.theme.RoseError
+import com.example.util.FirebaseDiagnosticsReport
 import com.example.util.LocalHapticFeedbackManager
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -76,6 +86,11 @@ fun DashboardScreen(
     isRefreshing: Boolean = false,
     incomingProposals: List<Proposal> = emptyList(),
     sentProposals: List<Proposal> = emptyList(),
+    ideaPortfolioItems: List<IdeaPortfolioEntity> = emptyList(),
+    ideaPortfolioQuery: String = "",
+    investorPortfolioItems: List<InvestorPortfolioEntity> = emptyList(),
+    investorPortfolioQuery: String = "",
+    investorStatusFilter: String = "All",
     isBusy: Boolean = false,
     onOpenAuth: () -> Unit,
     onRefresh: () -> Unit,
@@ -84,11 +99,42 @@ fun DashboardScreen(
     onToggleBookmark: (BackendInnovation) -> Unit,
     onOpenPricing: () -> Unit,
     onOpenMatches: () -> Unit = {},
+    diagnosticsReport: FirebaseDiagnosticsReport = FirebaseDiagnosticsReport(),
+    onRunDiagnostics: () -> Unit = {},
     onRespondToProposal: (proposalId: String, accept: Boolean) -> Unit = { _, _ -> },
+    onIdeaPortfolioQueryChange: (String) -> Unit = {},
+    onAddIdeaToPortfolio: (title: String, summary: String, category: String, stage: String, priorityTag: String, notes: String) -> Unit = { _, _, _, _, _, _ -> },
+    onUpdateIdeaNotes: (id: String, priorityTag: String, notes: String) -> Unit = { _, _, _ -> },
+    onRemoveIdeaFromPortfolio: (String) -> Unit = {},
+    onOpenIdeaPortfolioItem: (IdeaPortfolioEntity) -> Unit = {},
+    onInvestorPortfolioQueryChange: (String) -> Unit = {},
+    onInvestorStatusFilterChange: (String) -> Unit = {},
+    onAddInvestorDeal: (title: String, summary: String, category: String, stage: String, founderName: String, fundingGoal: Double, valuation: Double, diligenceStatus: String, targetTicketSize: String, notes: String) -> Unit = { _, _, _, _, _, _, _, _, _, _ -> },
+    onUpdateInvestorDiligence: (id: String, status: String, ticketSize: String, notes: String) -> Unit = { _, _, _, _ -> },
+    onRemoveInvestorDeal: (String) -> Unit = {},
+    onOpenInvestorPortfolioItem: (InvestorPortfolioEntity) -> Unit = {},
+    savedProfiles: List<SavedProfileEntity> = emptyList(),
+    savedProfilesQuery: String = "",
+    onSavedProfilesQueryChange: (String) -> Unit = {},
+    onRemoveSavedProfile: (String) -> Unit = {},
+    onBrowseCollaborators: () -> Unit = {},
+    onMessageSavedProfile: (SavedProfileEntity) -> Unit = {},
+    unreadMessagesCount: Int = 0,
+    collaborationsCount: Int = 0,
+    pendingInvitesCount: Int = 0,
+    onOpenMessages: () -> Unit = {},
+    onOpenCollaborations: () -> Unit = {},
     onSignOut: () -> Unit
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("My Innovations", "Saved", "Proposals")
+    val tabs = listOf(
+        "My Innovations",
+        "Saved",
+        "Idea Portfolio (${ideaPortfolioItems.size})",
+        "Investor Portfolio (${investorPortfolioItems.size})",
+        "Saved Profiles (${savedProfiles.size})",
+        "Proposals"
+    )
     val haptics = LocalHapticFeedbackManager.current
 
     val stats = (dashboardState as? UiState.Success)?.data ?: DashboardStats()
@@ -264,7 +310,58 @@ fun DashboardScreen(
         }
 
         item {
-            SecondaryTabRow(selectedTabIndex = selectedTab) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        haptics.tap()
+                        onOpenMessages()
+                    },
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("dashboard_messages_button")
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = if (unreadMessagesCount > 0) "Messages ($unreadMessagesCount)" else "Messages",
+                        maxLines = 1
+                    )
+                }
+                OutlinedButton(
+                    onClick = {
+                        haptics.tap()
+                        onOpenCollaborations()
+                    },
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("dashboard_collaborations_button")
+                ) {
+                    Icon(Icons.Filled.Handshake, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    val badgeCount = if (pendingInvitesCount > 0) pendingInvitesCount else collaborationsCount
+                    Text(
+                        text = when {
+                            pendingInvitesCount > 0 -> "Collabs ($pendingInvitesCount new)"
+                            badgeCount > 0 -> "Collabs ($badgeCount)"
+                            else -> "Collaborations"
+                        },
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+
+        item(key = "dashboard_firebase_diagnostics") {
+            FirebaseDiagnosticsCard(
+                report = diagnosticsReport,
+                onRunDiagnostics = onRunDiagnostics
+            )
+        }
+
+        item {
+            SecondaryScrollableTabRow(
+                selectedTabIndex = selectedTab,
+                edgePadding = 0.dp
+            ) {
                 tabs.forEachIndexed { index, label ->
                     Tab(
                         selected = selectedTab == index,
@@ -279,7 +376,44 @@ fun DashboardScreen(
             }
         }
 
-        if (currentUser == null) {
+        if (selectedTab == 2) {
+            item(key = "dashboard_idea_portfolio") {
+                IdeaPortfolioSection(
+                    items = ideaPortfolioItems,
+                    searchQuery = ideaPortfolioQuery,
+                    onSearchQueryChange = onIdeaPortfolioQueryChange,
+                    onAddIdea = onAddIdeaToPortfolio,
+                    onUpdateNotes = onUpdateIdeaNotes,
+                    onRemove = onRemoveIdeaFromPortfolio,
+                    onOpenOrAnalyze = onOpenIdeaPortfolioItem
+                )
+            }
+        } else if (selectedTab == 3) {
+            item(key = "dashboard_investor_portfolio") {
+                InvestorPortfolioSection(
+                    items = investorPortfolioItems,
+                    searchQuery = investorPortfolioQuery,
+                    statusFilter = investorStatusFilter,
+                    onSearchQueryChange = onInvestorPortfolioQueryChange,
+                    onStatusFilterChange = onInvestorStatusFilterChange,
+                    onAddDeal = onAddInvestorDeal,
+                    onUpdateDiligence = onUpdateInvestorDiligence,
+                    onRemove = onRemoveInvestorDeal,
+                    onOpenOrAnalyze = onOpenInvestorPortfolioItem
+                )
+            }
+        } else if (selectedTab == 4) {
+            item(key = "dashboard_saved_profiles") {
+                SavedProfilesSection(
+                    items = savedProfiles,
+                    searchQuery = savedProfilesQuery,
+                    onSearchQueryChange = onSavedProfilesQueryChange,
+                    onRemove = onRemoveSavedProfile,
+                    onBrowseCollaborators = onBrowseCollaborators,
+                    onMessageProfile = onMessageSavedProfile
+                )
+            }
+        } else if (currentUser == null) {
             item {
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
